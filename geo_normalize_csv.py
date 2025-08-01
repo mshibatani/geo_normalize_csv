@@ -256,6 +256,114 @@ def render_template(template_str, row, cache, full_api_address, api_key, sleep_m
             return ""
     return re.sub(r"\{([^{}]+)\}", replacer, template_str)
 
+def remove_street_number(address):
+    """住所から番地部分を取り除く"""
+    # 番地パターンを削除（例: 1-2-3, 123, 1丁目2番3号など）
+    address = re.sub(r'[0-9０-９]+[-－][0-9０-９]+[-－]?[0-9０-９]*', '', address)
+    address = re.sub(r'[0-9０-９]+丁目[0-9０-９]+番[0-9０-９]*号?', '', address)
+    address = re.sub(r'[0-9０-９]+番[0-9０-９]*号?', '', address)
+    address = re.sub(r'[0-9０-９]+号', '', address)
+    address = re.sub(r'[0-9０-９]+$', '', address)
+    return address.strip()
+
+def calculate_similarity(str1, str2):
+    """文字列の類似度を計算（レーベンシュタイン距離ベース）"""
+    if not str1 or not str2:
+        return 0
+    
+    # 文字列を正規化
+    str1 = str1.replace('ヶ', 'ケ').replace('が', 'ガ')
+    str2 = str2.replace('ヶ', 'ケ').replace('が', 'ガ')
+    
+    # レーベンシュタイン距離を計算
+    def levenshtein_distance(s1, s2):
+        if len(s1) < len(s2):
+            return levenshtein_distance(s2, s1)
+        if len(s2) == 0:
+            return len(s1)
+        
+        previous_row = list(range(len(s2) + 1))
+        for i, c1 in enumerate(s1):
+            current_row = [i + 1]
+            for j, c2 in enumerate(s2):
+                insertions = previous_row[j + 1] + 1
+                deletions = current_row[j] + 1
+                substitutions = previous_row[j] + (c1 != c2)
+                current_row.append(min(insertions, deletions, substitutions))
+            previous_row = current_row
+        
+        return previous_row[-1]
+    
+    distance = levenshtein_distance(str1, str2)
+    max_len = max(len(str1), len(str2))
+    similarity = 1 - (distance / max_len) if max_len > 0 else 0
+    return similarity
+
+def find_similar_addresses(target_address, validation_db, max_suggestions=3, similarity_threshold=0.3):
+    """類似住所を検索して提案する"""
+    if not validation_db:
+        return []
+    
+    # 番地部分を取り除いて正規化
+    normalized_target = remove_street_number(target_address)
+    
+    # 類似度を計算してソート
+    similarities = []
+    for db_address in validation_db:
+        normalized_db = remove_street_number(db_address)
+        similarity = calculate_similarity(normalized_target, normalized_db)
+        if similarity >= similarity_threshold:
+            similarities.append((db_address, similarity))
+    
+    # 類似度でソートして上位を返す
+    similarities.sort(key=lambda x: x[1], reverse=True)
+    return similarities[:max_suggestions]
+
+def load_address_validation_db(db_path):
+    """住所検証用DBを読み込む"""
+    try:
+        with open(db_path, 'r', encoding='utf-8') as f:
+            reader = csv.reader(f)
+            addresses = set()
+            for row in reader:
+                address = row[0].strip() if row else ""
+                if address:
+                    addresses.add(address)
+        print(f"✅ 住所検証DBを読み込みました: {len(addresses)}件 (ファイル: {os.path.abspath(db_path)})")
+        return addresses
+    except FileNotFoundError:
+        print(f"⚠️  警告: 住所検証DB '{db_path}' が見つかりません")
+        return set()
+    except Exception as e:
+        print(f"❌ エラー: 住所検証DBの読み込みに失敗しました: {e}")
+        return set()
+
+def validate_address(address, validation_db):
+    """住所の実在性をチェック"""
+    if not validation_db:
+        return True, "住所検証DBが利用できません"
+    
+    # 番地部分を取り除いて住所を正規化
+    normalized_address = remove_street_number(address)
+    
+    # デバッグ情報を追加 🔍
+    print(f"🔍 住所検証デバッグ:")
+    print(f"  元の住所: '{address}'")
+    print(f"  正規化後: '{normalized_address}'")
+    print(f"  DBに存在: {normalized_address in validation_db}")
+    
+    # 住所DBに存在するかチェック
+    if normalized_address in validation_db:
+        return True, f"住所が確認されました: {normalized_address}"
+    else:
+        # 類似住所を検索して提案
+        similar_addresses = find_similar_addresses(address, validation_db)
+        suggestion_text = ""
+        if similar_addresses:
+            suggestion_text = " 類似住所候補: " + ", ".join([f"{addr} ({sim:.1f})" for addr, sim in similar_addresses])
+        
+        return False, f"住所が見つかりません: {normalized_address}{suggestion_text}"
+
 def process(config_path):
     config = load_config(config_path)
     input_rows = read_csv(config["input"])
@@ -268,6 +376,10 @@ def process(config_path):
     api_needed = any("{lat}" in v or "{long}" in v for v in format_config.values())
     api_key = config.get("api", {}).get("key") if api_needed else None
     sleep_msec = int(config.get("api", {}).get("sleep", 200)) if api_needed else 200
+
+    # 住所検証DBの読み込み
+    validation_db_path = config.get("address_validation_db", "address_validation_db.csv")
+    validation_db = load_address_validation_db(validation_db_path)
 
     api_opts = config.get("api", {})
     mode = api_opts.get("mode", "distance")
@@ -330,33 +442,73 @@ def process(config_path):
         elif normalized_address.startswith(prefecture):
             # 行頭の都道府県名を取り除く
             normalized_address = normalized_address[len(prefecture):]
-        full_api_address = f"{prefecture}{city}{normalized_address}"
-
-        print(f"{idx}行目を処理中です: {full_api_address}")
-
-        # 緯度経度（note_listを渡してget_best_latlng内でnote列をセット）
-        lat, lng, source = get_best_latlng(
-            full_api_address, api_key, gsi_check, gsi_dist, priority, mode, reverse_geocode_check, note_list
-        )
-        cache["latlng"] = (lat, lng)
-        cache["source"] = source
-
-        for col_name in header:
-            if col_name == "note":
-                out_row.append("".join(note_list))
-            elif col_name == "address":
-                out_row.append(clean(normalized_address))
-            elif col_name in format_config:
-                rendered = render_template(
-                    format_config[col_name], row, cache, full_api_address, api_key, sleep_msec,
-                    gsi_check, gsi_dist, priority, mode, reverse_geocode_check
-                )
-                out_row.append(rendered)
+        
+        # 「ヶ」を「ケ」に置換したバージョンも生成 🔄
+        original_address = normalized_address
+        ke_replaced_address = normalized_address.replace('ヶ', 'ケ')
+        
+        # 元の住所と「ケ」置換版の両方を処理
+        addresses_to_process = []
+        if original_address != ke_replaced_address:
+            addresses_to_process.append((original_address, "original"))
+            addresses_to_process.append((ke_replaced_address, "ke_replaced"))
+        else:
+            addresses_to_process.append((original_address, "original"))
+        
+        for address_variant, variant_type in addresses_to_process:
+            full_api_address = f"{prefecture}{city}{address_variant}"
+            
+            print(f"{idx}行目を処理中です: {full_api_address}")
+            
+            # 区番号を取得
+            number_token = format_config.get("number", "")
+            if "{" in number_token and "}" in number_token:
+                match = re.search(r"\{(\d+)\}", number_token)
+                number_index = int(match.group(1)) - 1 if match else -1
+                district_number = row[number_index] if 0 <= number_index < len(row) else ""
             else:
-                out_row.append("")
+                district_number = ""
 
-        with open(output_path, 'a', encoding='utf-8', newline='') as f:
-            csv.writer(f).writerow(out_row)
+            # 住所の実在性チェック
+            is_valid, validation_message = validate_address(full_api_address, validation_db)
+            if not is_valid:
+                print(f"⚠️  住所エラー (区番号{district_number}, 行{idx}): {validation_message}")
+                note_list.append(f"住所エラー: {validation_message}")
+                # 座標取得をスキップ
+                cache["latlng"] = (None, None)
+                cache["source"] = "skipped"
+            else:
+                # 住所検証（OCR誤字チェック）
+                if api_key and config.get("validate_address", False):
+                    # comprehensive_address_validation関数は現在未実装のため無効化 🔧
+                    pass
+                
+                # 緯度経度（note_listを渡してget_best_latlng内でnote列をセット）
+                lat, lng, source = get_best_latlng(
+                    full_api_address, api_key, gsi_check, gsi_dist, priority, mode, reverse_geocode_check, note_list
+                )
+                cache["latlng"] = (lat, lng)
+                cache["source"] = source
+            
+            # 出力行の生成
+            out_row = []
+            for col_name in header:
+                if col_name == "note":
+                    variant_note = f"[{variant_type}]" if variant_type != "original" else ""
+                    out_row.append("".join(note_list) + variant_note)
+                elif col_name == "address":
+                    out_row.append(clean(address_variant))
+                elif col_name in format_config:
+                    rendered = render_template(
+                        format_config[col_name], row, cache, full_api_address, api_key, sleep_msec,
+                        gsi_check, gsi_dist, priority, mode, reverse_geocode_check
+                    )
+                    out_row.append(rendered)
+                else:
+                    out_row.append("")
+
+            with open(output_path, 'a', encoding='utf-8', newline='') as f:
+                csv.writer(f).writerow(out_row)
 
     print(f"\n完了：{len(input_rows)}件のデータを出力しました → {output_path}")
 
