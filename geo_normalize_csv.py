@@ -346,11 +346,11 @@ def validate_address(address, validation_db):
     # 番地部分を取り除いて住所を正規化
     normalized_address = remove_street_number(address)
     
-    # デバッグ情報を追加 🔍
-    print(f"🔍 住所検証デバッグ:")
-    print(f"  元の住所: '{address}'")
-    print(f"  正規化後: '{normalized_address}'")
-    print(f"  DBに存在: {normalized_address in validation_db}")
+    # デバッグ情報（必要に応じてコメントアウト） 🔍
+    # print(f"🔍 住所検証デバッグ:")
+    # print(f"  元の住所: '{address}'")
+    # print(f"  正規化後: '{normalized_address}'")
+    # print(f"  DBに存在: {normalized_address in validation_db}")
     
     # 住所DBに存在するかチェック
     if normalized_address in validation_db:
@@ -480,7 +480,6 @@ def process(config_path):
             else:
                 # 住所検証（OCR誤字チェック）
                 if api_key and config.get("validate_address", False):
-                    # comprehensive_address_validation関数は現在未実装のため無効化 🔧
                     pass
                 
                 # 緯度経度（note_listを渡してget_best_latlng内でnote列をセット）
