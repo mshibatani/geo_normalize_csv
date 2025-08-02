@@ -379,6 +379,8 @@ def process(config_path):
 
     # 住所検証DBの読み込み
     validation_db_path = config.get("address_validation_db", "address_validation_db.csv")
+    if validation_db_path == "":
+        validation_db_path = "/tmp/address_validation_db.csv"
     validation_db = load_address_validation_db(validation_db_path)
 
     api_opts = config.get("api", {})

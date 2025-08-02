@@ -90,8 +90,8 @@ def save_addresses_to_csv(addresses, output_file):
 def main():
     parser = argparse.ArgumentParser(description='郵便番号データベースから住所情報を抽出')
     parser.add_argument('input', help='入力ファイル（utf_ken_all.csv）')
-    parser.add_argument('-o', '--output', default='extracted_addresses.csv', 
-                       help='出力CSVファイル名（デフォルト: extracted_addresses.csv）')
+    parser.add_argument('-o', '--output', default='address_validation_db.csv', 
+                       help='出力CSVファイル名（デフォルト: address_validation_db.csv）')
     parser.add_argument('--show-stats', action='store_true', 
                        help='統計情報を表示')
     
