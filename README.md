@@ -129,6 +129,8 @@ curl https://www.post.japanpost.jp/zipcode/dl/utf/zip/utf_ken_all.zip -o ./utf_k
 unzip utf_ken_all.zip
 rm ./utf_ken_all.zip  # zipファイルを削除
 python convert_address_db.py utf_ken_all.csv -o /tmp/address_validation_db.csv
+rm ./utf_ken_all.csv  # csvファイルを削除
+
 ```
 
 ### 3. スクリプトを実行
