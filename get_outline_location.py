@@ -1,59 +1,63 @@
-import requests
-import json
+import osmnx as ox
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.font_manager as fm
-import percache
+import geopandas as gpd
 
 # フォント設定を簡素化（エラー回避）
 plt.rcParams['font.sans-serif'] = ['Arial', 'DejaVu Sans']
 plt.rcParams['axes.unicode_minus'] = False
 
-WAY_ID = 90480360  # 取得したいWayのID
+# 対象の場所（例：東京駅）
+PLACE = "長沼公園, 八王子市, 日本"
 
-# percacheでAPIアクセスをキャッシュ
-cache = percache.Cache("api_cache")
-
-@cache
-def fetch_way_data(way_id):
+def get_place_polygon(place):
     """
-    Way IDを指定してOverpass APIからデータを取得する関数（キャッシュ付き）
+    osmnxを使って場所からポリゴンデータを取得する関数
     
     Args:
-        way_id: OpenStreetMapのWay ID
+        place: 検索する場所名
     
     Returns:
-        dict: APIレスポンスデータ
+        GeoDataFrame: 場所のポリゴンデータ
     """
-    overpass_url = "https://overpass-api.de/api/interpreter"
-    query = f"""
-[out:json];
-way({way_id});
-out geom;
-"""
-    
-    print(f"🌐 Way ID {way_id} のデータをAPIから取得中...")
-    response = requests.post(overpass_url, data={"data": query})
-    
-    if response.status_code == 200:
-        data = response.json()
-        print(f"✅ Way ID {way_id} のデータを正常に取得しました")
-        return data
-    else:
-        print(f"❌ APIリクエストエラー: {response.status_code}")
+    try:
+        print(f"🌐 場所 '{place}' のデータをosmnxから取得中...")
+        gdf = ox.geocode_to_gdf(place)
+        
+        if gdf.empty:
+            print(f"❌ 場所 '{place}' が見つかりませんでした")
+            return None
+        else:
+            print(f"✅ 場所 '{place}' のデータを正常に取得しました")
+            return gdf
+    except Exception as e:
+        print(f"❌ エラー: {e}")
         return None
 
-def find_corners(coords):
+def find_corners(gdf):
     """
-    座標列から各方向の角（最も外側の点）を見つける関数
+    GeoDataFrameから各方向の角（最も外側の点）を見つける関数
     
     Args:
-        coords: 座標のリスト [(lon, lat), ...]
+        gdf: GeoDataFrame
     
     Returns:
         dict: 各方向の角の座標
     """
-    if not coords or len(coords) < 3:
+    if gdf.empty:
+        return None
+    
+    # 最初のジオメトリを取得
+    geometry = gdf.geometry.iloc[0]
+    
+    # ポリゴンの座標を取得
+    if hasattr(geometry, 'exterior'):
+        coords = list(geometry.exterior.coords)
+    else:
+        print("❌ ポリゴンジオメトリが見つかりませんでした")
+        return None
+    
+    if len(coords) < 3:
         return None
     
     coords_array = np.array(coords)
@@ -125,7 +129,7 @@ def find_edge_center_between_corners(coords, corner1, corner2):
     Returns:
         (lon, lat): 辺の中央座標
     """
-    if not coords or len(coords) < 3:
+    if len(coords) < 3:
         return None
     
     coords_array = np.array(coords)
@@ -163,7 +167,7 @@ def find_closest_point_on_polygon(coords, target_point):
     Returns:
         (lon, lat): ポリゴンの線上の最も近い点
     """
-    if not coords or len(coords) < 3:
+    if len(coords) < 3:
         return None
     
     coords_array = np.array(coords)
@@ -178,19 +182,29 @@ def find_closest_point_on_polygon(coords, target_point):
     
     return (lons[closest_idx], lats[closest_idx])
 
-def calculate_direction_edge_center(coords, direction):
+def calculate_direction_edge_center(gdf, direction):
     """
-    座標列から指定された方角の辺上の中央座標を計算する関数（隣接角の中央ベース + ポリゴン線上）
+    GeoDataFrameから指定された方角の辺上の中央座標を計算する関数（隣接角の中央ベース + ポリゴン線上）
     
     Args:
-        coords: 座標のリスト [(lon, lat), ...]
+        gdf: GeoDataFrame
         direction: 方角 ("東", "西", "南", "北", "北東", "北西", "南東", "南西")
     
     Returns:
         (lon, lat): 辺上の中央座標（ポリゴンの線上）
     """
+    if gdf.empty:
+        return None
+    
+    # 座標を取得
+    geometry = gdf.geometry.iloc[0]
+    if hasattr(geometry, 'exterior'):
+        coords = list(geometry.exterior.coords)
+    else:
+        return None
+    
     # まず角を見つける
-    corners = find_corners(coords)
+    corners = find_corners(gdf)
     if not corners:
         return None
     
@@ -253,133 +267,127 @@ def calculate_direction_edge_center(coords, direction):
     
     return None
 
-def get_edge_center_by_direction(way_id, direction):
+def get_location_by_direction(place, direction):
     """
-    Way IDと方角を指定して、その方角の辺上の中央座標を取得する関数（キャッシュ付き）
+    場所名と方角を指定して、その方角の辺上の中央座標を取得する関数
     
     Args:
-        way_id: OpenStreetMapのWay ID
+        place: 検索する場所名
         direction: 方角 ("東", "西", "南", "北", "北東", "北西", "南東", "南西")
     
     Returns:
         (lon, lat): 辺上の中央座標（ポリゴンの線上）
     """
-    # キャッシュ付きでデータを取得
-    data = fetch_way_data(way_id)
+    # osmnxでデータを取得
+    gdf = get_place_polygon(place)
     
-    if data:
-        # 座標を抽出
-        if data['elements'] and 'geometry' in data['elements'][0]:
-            coords = [(point['lon'], point['lat']) for point in data['elements'][0]['geometry']]
-            
-            # 方角別の辺上中央座標を計算
-            edge_center = calculate_direction_edge_center(coords, direction)
-            
-            if edge_center:
-                print(f"📍 {direction}側の辺上中央座標: 経度={edge_center[0]:.6f}, 緯度={edge_center[1]:.6f}")
-                return edge_center
-            else:
-                print(f"❌ {direction}側の辺上中央座標を計算できませんでした")
-                return None
+    if gdf is not None:
+        # 方角別の辺上中央座標を計算
+        edge_center = calculate_direction_edge_center(gdf, direction)
+        
+        if edge_center:
+            print(f"📍 {direction}側の辺上中央座標: 経度={edge_center[0]:.6f}, 緯度={edge_center[1]:.6f}")
+            return edge_center
         else:
-            print("❌ ポリゴン情報が見つかりませんでした")
+            print(f"❌ {direction}側の辺上中央座標を計算できませんでした")
             return None
     else:
-        print(f"❌ Way ID {way_id} のデータを取得できませんでした")
+        print(f"❌ 場所 '{place}' のデータを取得できませんでした")
         return None
 
-def visualize_with_direction_centers(way_id):
+def visualize_with_direction_centers(place):
     """
-    Way IDを指定して、全方角の辺上中央座標を可視化する関数（キャッシュ付き）
+    場所名を指定して、全方角の辺上中央座標を可視化する関数
     """
-    # キャッシュ付きでデータを取得
-    data = fetch_way_data(way_id)
+    # osmnxでデータを取得
+    gdf = get_place_polygon(place)
     
-    if data:
-        # 座標を抽出
-        if data['elements'] and 'geometry' in data['elements'][0]:
-            coords = [(point['lon'], point['lat']) for point in data['elements'][0]['geometry']]
-            
-            # 可視化
-            plt.figure(figsize=(12, 10))
-            
-            # 元のポリゴンを描画
-            lons, lats = zip(*coords)
-            plt.plot(lons, lats, 'b-', linewidth=3, label='Original Polygon', alpha=0.7)
-            plt.fill(lons, lats, 'blue', alpha=0.1)
-            
-            # 全体の中心をプロット
-            center_lon = np.mean(lons)
-            center_lat = np.mean(lats)
-            plt.plot(center_lon, center_lat, 'ko', markersize=15, label='Center', zorder=10)
-            
-            # 角を見つけてプロット
-            corners = find_corners(coords)
-            if corners:
-                corner_lons = [corner[0] for corner in corners.values()]
-                corner_lats = [corner[1] for corner in corners.values()]
-                plt.plot(corner_lons, corner_lats, 'rx', markersize=15, label='Corners', zorder=12)
-            
-            # 各方角の辺上中央座標を計算・プロット
-            directions = ["東", "西", "南", "北", "北東", "北西", "南東", "南西"]
-            direction_labels = ["E", "W", "S", "N", "NE", "NW", "SE", "SW"]
-            direction_colors = {
-                "東": "red", "西": "blue", "南": "green", "北": "purple",
-                "北東": "orange", "北西": "brown", "南東": "pink", "南西": "cyan"
-            }
-            
-            # ラベルの位置オフセットを定義（調整版）
-            label_offsets = {
-                "東": (0.0005, 0),      # 右に少しずらす
-                "西": (-0.0005, 0),     # 左に少しずらす
-                "南": (0.0002, -0.0005), # 下に少しずらす（右にも少し）
-                "北": (0, 0.0005),      # 上に少しずらす
-                "北東": (0.0003, 0.0003), # 右上にずらす
-                "北西": (0.0002, 0.0003), # 左上にずらす（右にも少し）
-                "南東": (0.0003, -0.0003), # 右下にずらす
-                "南西": (-0.0003, -0.0003) # 左下にずらす
-            }
-            
-            for i, direction in enumerate(directions):
-                edge_center = calculate_direction_edge_center(coords, direction)
-                if edge_center:
-                    plt.plot(edge_center[0], edge_center[1], 'o', 
-                            color=direction_colors[direction], markersize=12, 
-                            markeredgecolor='white', markeredgewidth=2,
-                            label=f'{direction_labels[i]} Center', zorder=15)
-                    
-                    # ラベルを追加（オフセット付き）
-                    offset = label_offsets[direction]
-                    label_x = float(edge_center[0]) + offset[0]
-                    label_y = float(edge_center[1]) + offset[1]
-                    plt.text(label_x, label_y, direction_labels[i], 
-                            ha='center', va='center', fontsize=10, weight='bold', 
-                            color=direction_colors[direction], 
-                            bbox=dict(boxstyle="round,pad=0.2", facecolor='white', alpha=0.8))
-            
-            plt.title(f"Way ID {way_id} Direction Centers on Polygon Line (Corner-based)", fontsize=14)
-            plt.xlabel("Longitude", fontsize=12)
-            plt.ylabel("Latitude", fontsize=12)
-            plt.legend(fontsize=10, loc='upper right')
-            plt.grid(True, alpha=0.3)
-            plt.axis('equal')
-            
-            # ファイルに保存
-            output_file = f"way_{way_id}_direction_centers_corner_based.png"
-            plt.savefig(output_file, dpi=150, bbox_inches='tight')
-            print(f"✅ 可視化結果を保存しました: {output_file}")
-            
-            plt.show()
-            
+    if gdf is not None:
+        # 座標を取得
+        geometry = gdf.geometry.iloc[0]
+        if hasattr(geometry, 'exterior'):
+            coords = list(geometry.exterior.coords)
         else:
             print("❌ ポリゴン情報が見つかりませんでした")
+            return
+        
+        # 可視化
+        plt.figure(figsize=(12, 10))
+        
+        # 元のポリゴンを描画
+        lons, lats = zip(*coords)
+        plt.plot(lons, lats, 'b-', linewidth=3, label='Original Polygon', alpha=0.7)
+        plt.fill(lons, lats, 'blue', alpha=0.1)
+        
+        # 全体の中心をプロット
+        center_lon = np.mean(lons)
+        center_lat = np.mean(lats)
+        plt.plot(center_lon, center_lat, 'ko', markersize=15, label='Center', zorder=10)
+        
+        # 角を見つけてプロット
+        corners = find_corners(gdf)
+        if corners:
+            corner_lons = [corner[0] for corner in corners.values()]
+            corner_lats = [corner[1] for corner in corners.values()]
+            plt.plot(corner_lons, corner_lats, 'rx', markersize=15, label='Corners', zorder=12)
+        
+        # 各方角の辺上中央座標を計算・プロット
+        directions = ["東", "西", "南", "北", "北東", "北西", "南東", "南西"]
+        direction_labels = ["E", "W", "S", "N", "NE", "NW", "SE", "SW"]
+        direction_colors = {
+            "東": "red", "西": "blue", "南": "green", "北": "purple",
+            "北東": "orange", "北西": "brown", "南東": "pink", "南西": "cyan"
+        }
+        
+        # ラベルの位置オフセットを定義（調整版）
+        label_offsets = {
+            "東": (0.0005, 0),      # 右に少しずらす
+            "西": (-0.0005, 0),     # 左に少しずらす
+            "南": (0.0002, -0.0005), # 下に少しずらす（右にも少し）
+            "北": (0, 0.0005),      # 上に少しずらす
+            "北東": (0.0003, 0.0003), # 右上にずらす
+            "北西": (0.0002, 0.0003), # 左上にずらす（右にも少し）
+            "南東": (0.0003, -0.0003), # 右下にずらす
+            "南西": (-0.0003, -0.0003) # 左下にずらす
+        }
+        
+        for i, direction in enumerate(directions):
+            edge_center = calculate_direction_edge_center(gdf, direction)
+            if edge_center:
+                plt.plot(edge_center[0], edge_center[1], 'o', 
+                        color=direction_colors[direction], markersize=12, 
+                        markeredgecolor='white', markeredgewidth=2,
+                        label=f'{direction_labels[i]} Center', zorder=15)
+                
+                # ラベルを追加（オフセット付き）
+                offset = label_offsets[direction]
+                label_x = float(edge_center[0]) + offset[0]
+                label_y = float(edge_center[1]) + offset[1]
+                plt.text(label_x, label_y, direction_labels[i], 
+                        ha='center', va='center', fontsize=10, weight='bold', 
+                        color=direction_colors[direction], 
+                        bbox=dict(boxstyle="round,pad=0.2", facecolor='white', alpha=0.8))
+        
+        plt.title(f"Place: {place} Direction Centers on Polygon Line (OSMnx)", fontsize=14)
+        plt.xlabel("Longitude", fontsize=12)
+        plt.ylabel("Latitude", fontsize=12)
+        plt.legend(fontsize=10, loc='upper right')
+        plt.grid(True, alpha=0.3)
+        plt.axis('equal')
+        
+        # ファイルに保存
+        output_file = f"place_{place.replace(', ', '_').replace(' ', '_')}_direction_centers_osmnx.png"
+        plt.savefig(output_file, dpi=150, bbox_inches='tight')
+        print(f"✅ 可視化結果を保存しました: {output_file}")
+        
+        plt.show()
+        
     else:
-        print(f"❌ Way ID {way_id} のデータを取得できませんでした")
+        print(f"❌ 場所 '{place}' のデータを取得できませんでした")
 
 # メイン実行部分
 if __name__ == "__main__":
-    print(f"🔍 Way ID {WAY_ID} の座標を取得中...")
-    print("💾 percacheを使用してAPIアクセスをキャッシュします")
+    print(f"🔍 場所 '{PLACE}' の座標をosmnxから取得中...")
     print("🔍 角ベースのアルゴリズムで各方向の位置を決定します")
     
     # 全方角の辺上中央座標を計算
@@ -387,9 +395,9 @@ if __name__ == "__main__":
     
     print("\n📍 各方向の辺上中央座標（角ベースアルゴリズム）:")
     for direction in directions:
-        get_edge_center_by_direction(WAY_ID, direction)
+        get_location_by_direction(PLACE, direction)
     
     print("\n🎨 可視化を実行中...")
-    visualize_with_direction_centers(WAY_ID)
+    visualize_with_direction_centers(PLACE)
     
-    print("\n💡 2回目以降の実行では、キャッシュから高速にデータを取得します")
+    print("\n💡 osmnxライブラリを使用して高速にデータを取得しました")
