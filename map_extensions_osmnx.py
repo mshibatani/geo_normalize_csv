@@ -1191,7 +1191,7 @@ def visualize_with_direction_positions(corner_positions, coordinates):
     plt.axis('equal')
     
     # ファイルに保存
-    output_file = f"direction_positions_human_way.png"
+    output_file = f"map_extensions_osmnx_direction_positions.png"
     plt.savefig(output_file, dpi=150, bbox_inches='tight')
     logger.info(f"✅ 可視化結果を保存しました: {output_file}")
     
@@ -1348,7 +1348,7 @@ def visualize_rotated_positions(rotated_coordinates, optimal_angle):
                 logger.debug(f"🔍 {direction}: 座標なし")
     
     # ファイルに保存
-    output_file = f"place_rotated_debug.png"
+    output_file = f"map_extensions_osmnx_rotated_debug.png"
     plt.savefig(output_file, dpi=150, bbox_inches='tight')
     logger.info(f"✅ 回転後座標の可視化結果を保存しました: {output_file}")
     
