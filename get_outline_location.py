@@ -10,7 +10,8 @@ plt.rcParams['font.sans-serif'] = ['Arial', 'DejaVu Sans']
 plt.rcParams['axes.unicode_minus'] = False
 
 # 対象の場所（例：東京駅）
-PLACE = "みなみ野毘沙門の丘緑地, 八王子市, 日本"
+# PLACE = "みなみ野毘沙門の丘緑地, 八王子市, 日本"
+PLACE = "長沼公園, 八王子市, 日本"
 
 def get_place_polygon(place):
     """
@@ -149,11 +150,11 @@ def rotate_coordinates_back(coords, angle, original_centroid=None):
     
     coords_array = np.array(coords)
     
-    # 中心点が指定されていない場合は計算
-    if original_centroid is None:
-        centroid = np.mean(coords_array, axis=0)
-    else:
+    # 元の座標系の中心点が指定されている場合はそれを使用、そうでなければ回転後の座標の中心を使用
+    if original_centroid is not None:
         centroid = np.array(original_centroid)
+    else:
+        centroid = np.mean(coords_array, axis=0)
     
     # 重心を原点に移動
     centered_coords = coords_array - centroid
@@ -329,6 +330,7 @@ def convert_rotated_to_original(rotated_corners, angle, original_coords=None):
     original_centroid = None
     if original_coords:
         original_centroid = np.mean(np.array(original_coords), axis=0)
+        print(f"🔍 デバッグ: 元の座標系の中心点 = ({original_centroid[0]:.6f}, {original_centroid[1]:.6f})")
     
     # 回転後の座標を元の座標系に戻す
     original_corners = {}
@@ -1000,277 +1002,224 @@ def get_location_by_direction(place, direction):
         print(f"❌ 場所 '{place}' のデータを取得できませんでした")
         return None
 
-def visualize_with_direction_positions(place):
+def visualize_with_direction_positions(corners_data, coords):
     """
-    場所名を指定して、全方角の辺上位置座標を可視化する関数
-    """
-    # osmnxでデータを取得
-    gdf = get_place_polygon(place)
+    全方角の辺上位置座標を可視化する関数
     
-    if gdf is not None:
-        # 座標を取得
-        geometry = gdf.geometry.iloc[0]
-        if hasattr(geometry, 'exterior'):
-            coords = list(geometry.exterior.coords)
-        else:
-            print("❌ ポリゴン情報が見つかりませんでした")
-            return
-        
-        # 可視化
-        plt.figure(figsize=(12, 10))
-        
-        # 元のポリゴンを描画
-        lons, lats = zip(*coords)
-        plt.plot(lons, lats, 'b-', linewidth=3, label='Original Polygon', alpha=0.7)
-        plt.fill(lons, lats, 'blue', alpha=0.1)
-        
-        # 全体の中心をプロット
-        center_lon = np.mean(lons)
-        center_lat = np.mean(lats)
-        plt.plot(center_lon, center_lat, 'ko', markersize=15, label='Center', zorder=10)
-        
-        # 人間の形状認識に基づいて角を見つけてプロット
-        corners = find_corners_human_way(coords)
-        if corners:
-            corner_lons = [corner[0] for corner in corners.values()]
-            corner_lats = [corner[1] for corner in corners.values()]
-            plt.plot(corner_lons, corner_lats, 'rx', markersize=15, label='Corners (Human Way)', zorder=12)
-        
-        # 各方角の辺上位置座標を計算・プロット
-        directions = ["東", "西", "南", "北", "北東", "北西", "南東", "南西"]
-        direction_labels = ["E", "W", "S", "N", "NE", "NW", "SE", "SW"]
-        direction_colors = {
-            "東": "red", "西": "blue", "南": "green", "北": "purple",
-            "北東": "orange", "北西": "brown", "南東": "pink", "南西": "cyan"
-        }
-        
-        # ラベルの位置オフセットを定義（調整版）
-        label_offsets = {
-            "東": (0.0005, 0),      # 右に少しずらす
-            "西": (-0.0005, 0),     # 左に少しずらす
-            "南": (0.0002, -0.0005), # 下に少しずらす（右にも少し）
-            "北": (0, 0.0005),      # 上に少しずらす
-            "北東": (0.0003, 0.0003), # 右上にずらす
-            "北西": (0.0002, 0.0003), # 左上にずらす（右にも少し）
-            "南東": (0.0003, -0.0003), # 右下にずらす
-            "南西": (-0.0003, -0.0003) # 左下にずらす
-        }
-        
-        for i, direction in enumerate(directions):
-            edge_position = calculate_direction_edge_position(gdf, direction)
-            if edge_position:
-                # NE, NW, SE, SWは角として表示
-                if direction in ["北東", "北西", "南東", "南西"]:
-                    plt.plot(edge_position[0], edge_position[1], 's', 
-                            color=direction_colors[direction], markersize=12, 
-                            markeredgecolor='white', markeredgewidth=2,
-                            label=f'{direction_labels[i]} Corner', zorder=15)
-                else:
-                    # N, E, S, Wは中央計算として表示
-                    plt.plot(edge_position[0], edge_position[1], 'o', 
-                            color=direction_colors[direction], markersize=12, 
-                            markeredgecolor='white', markeredgewidth=2,
-                            label=f'{direction_labels[i]} Center', zorder=15)
+    Args:
+        corners_data: convert_rotated_to_originalで変換された座標データ
+        coords: 元のポリゴン座標リスト
+    """
+    if corners_data is None or coords is None:
+        print("❌ corners_data または coords が None です")
+        return
+    
+    # 可視化
+    plt.figure(figsize=(12, 10))
+    
+    # 元のポリゴンを描画
+    lons, lats = zip(*coords)
+    plt.plot(lons, lats, 'b-', linewidth=3, label='Original Polygon', alpha=0.7)
+    plt.fill(lons, lats, 'blue', alpha=0.1)
+    
+    # 全体の中心をプロット
+    center_lon = np.mean(lons)
+    center_lat = np.mean(lats)
+    plt.plot(center_lon, center_lat, 'ko', markersize=15, label='Center', zorder=10)
+    
+    # corners_dataが提供されている場合は、変換された座標をプロット
+    if corners_data and "original" in corners_data:
+            original_corners = corners_data["original"]
+            if original_corners:
+                # 変換された座標をプロット
+                converted_lons = [corner[0] for corner in original_corners.values()]
+                converted_lats = [corner[1] for corner in original_corners.values()]
+                plt.plot(converted_lons, converted_lats, 'go', markersize=12, 
+                        markeredgecolor='black', markeredgewidth=2,
+                        label='Converted Corners (Rotated Back)', zorder=13)
                 
-                # ラベルを追加（オフセット付き）
-                offset = label_offsets[direction]
-                label_x = float(edge_position[0]) + offset[0]
-                label_y = float(edge_position[1]) + offset[1]
-                plt.text(label_x, label_y, direction_labels[i], 
-                        ha='center', va='center', fontsize=10, weight='bold', 
-                        color=direction_colors[direction], 
-                        bbox=dict(boxstyle="round,pad=0.2", facecolor='white', alpha=0.8))
-        
-        plt.title(f"Place: {place} Direction Positions (Human Shape Recognition)", fontsize=14)
-        plt.xlabel("Longitude", fontsize=12)
-        plt.ylabel("Latitude", fontsize=12)
-        plt.legend(fontsize=10, loc='upper right')
-        plt.grid(True, alpha=0.3)
-        plt.axis('equal')
-        
-        # ファイルに保存
-        output_file = f"place_{place.replace(', ', '_').replace(' ', '_')}_direction_positions_human_way.png"
-        plt.savefig(output_file, dpi=150, bbox_inches='tight')
-        print(f"✅ 可視化結果を保存しました: {output_file}")
-        
-        plt.show()
-        
-    else:
-        print(f"❌ 場所 '{place}' のデータを取得できませんでした")
+                # 変換された座標にラベルを追加
+                direction_labels = {"東": "E", "西": "W", "南": "S", "北": "N", 
+                                  "北東": "NE", "北西": "NW", "南東": "SE", "南西": "SW"}
+                for direction, coords in original_corners.items():
+                    if direction in direction_labels:
+                        plt.text(coords[0], coords[1], direction_labels[direction], 
+                                ha='center', va='center', fontsize=9, weight='bold',
+                                color='green', bbox=dict(boxstyle="round,pad=0.2", 
+                                facecolor='white', alpha=0.8), zorder=14)
+    
+    # 人間の形状認識に基づいて角を見つけてプロット（従来の方法）
+    
+    plt.title(f"Direction Positions (Human Shape Recognition)", fontsize=14)
+    plt.xlabel("Longitude", fontsize=12)
+    plt.ylabel("Latitude", fontsize=12)
+    plt.legend(fontsize=10, loc='upper right')
+    plt.grid(True, alpha=0.3)
+    plt.axis('equal')
+    
+    # ファイルに保存
+    output_file = f"direction_positions_human_way.png"
+    plt.savefig(output_file, dpi=150, bbox_inches='tight')
+    print(f"✅ 可視化結果を保存しました: {output_file}")
+    
+    plt.show()
 
-def visualize_rotated_positions(place):
+def visualize_rotated_positions(rotated_coords, optimal_angle):
     """
     回転後の座標系で位置を可視化する関数（デバッグ用）
     
     Args:
-        place: 検索する場所名
+        rotated_coords: 回転後の座標リスト
+        optimal_angle: 回転角度
         
     Returns:
         dict: 計算された各方向の座標（回転後の座標系）
     """
-    # osmnxでデータを取得
-    gdf = get_place_polygon(place)
-    
-    if gdf is not None:
-        # 座標を取得
-        geometry = gdf.geometry.iloc[0]
-        if hasattr(geometry, 'exterior'):
-            coords = list(geometry.exterior.coords)
-        else:
-            print("❌ ポリゴン情報が見つかりませんでした")
-            return
-        
-        # 形状の向きを判定
-        optimal_angle = determine_shape_orientation(coords)
-        print(f"🔄 形状の最適回転角度: {np.degrees(optimal_angle):.1f}度")
-        
-        # 座標を回転
-        rotated_coords = rotate_coordinates(coords, optimal_angle)
-        rotated_array = np.array(rotated_coords)
-        
-        # 可視化
-        plt.figure(figsize=(12, 10))
-        
-        # 回転後のポリゴンを描画
-        lons, lats = zip(*rotated_coords)
-        plt.plot(lons, lats, 'b-', linewidth=3, label='Rotated Polygon', alpha=0.7)
-        plt.fill(lons, lats, 'blue', alpha=0.1)
-        
-        # 回転後の中心をプロット
-        center_lon = np.mean(lons)
-        center_lat = np.mean(lats)
-        plt.plot(center_lon, center_lat, 'ko', markersize=15, label='Center', zorder=10)
-        
-        # 回転後の座標から角を決定
-        lons_array = rotated_array[:, 0]
-        lats_array = rotated_array[:, 1]
-        
-        # デバッグ: 回転後の座標範囲を確認
-        print(f"🔍 デバッグ: 回転後の座標範囲 - X: {min(lons_array):.6f} ～ {max(lons_array):.6f}, Y: {min(lats_array):.6f} ～ {max(lats_array):.6f}")
-        print(f"🔍 デバッグ: 回転後の中心座標 - ({center_lon:.6f}, {center_lat:.6f})")
-        
-        # 各方向の角を見つける（回転後の座標系で）
-        corners = calculate_corner_positions(rotated_coords, center_lon, center_lat)
-
-        # 角をプロット
-        if corners:
-            corner_lons = [corner[0] for corner in corners.values()]
-            corner_lats = [corner[1] for corner in corners.values()]
-            plt.plot(corner_lons, corner_lats, 'rx', markersize=15, label='Corners (Rotated)', zorder=12)
-            
-            # デバッグ: corners辞書の内容を確認
-            print(f"🔍 デバッグ: corners辞書の内容 - {list(corners.keys())}")
-            for direction, corner in corners.items():
-                print(f"🔍 デバッグ: {direction} = ({corner[0]:.6f}, {corner[1]:.6f})")
-        
-        # 各方角の辺上位置座標を計算・プロット
-        directions = ["東", "西", "南", "北", "北東", "北西", "南東", "南西"]
-        direction_labels = ["E", "W", "S", "N", "NE", "NW", "SE", "SW"]
-        direction_colors = {
-            "東": "red", "西": "blue", "南": "green", "北": "purple",
-            "北東": "orange", "北西": "brown", "南東": "pink", "南西": "cyan"
-        }
-        
-        # ラベルの位置オフセットを定義
-        label_offsets = {
-            "東": (0.0001, 0),
-            "西": (-0.0001, 0),
-            "南": (0.0001, -0.0001),
-            "北": (0, 0.0001),
-            "北東": (0.0001, 0.0001),
-            "北西": (0.0001, 0.0001),
-            "南東": (0.0001, -0.0001),
-            "南西": (-0.0001, -0.0001)
-        }
-        
-        for i, direction in enumerate(directions):
-            if direction in corners:
-                corner = corners[direction]
-                print(f"🎨 プロット: {direction} - 座標({corner[0]:.6f}, {corner[1]:.6f})")
-                
-                # NE, NW, SE, SWは角として表示
-                if direction in ["北東", "北西", "南東", "南西"]:
-                    plt.plot(corner[0], corner[1], 's', 
-                            color=direction_colors[direction], markersize=16, 
-                            markeredgecolor='black', markeredgewidth=3,
-                            label=f'{direction_labels[i]} Corner', zorder=20)
-                else:
-                    # N, E, S, Wは中央計算として表示（大きく目立つように）
-                    if direction == "南":
-                        # 南側（S）は特に目立つように
-                        plt.plot(corner[0], corner[1], '*', 
-                                color=direction_colors[direction], markersize=25, 
-                                markeredgecolor='black', markeredgewidth=3,
-                                label=f'{direction_labels[i]} Center', zorder=30)
-                    else:
-                        # その他の方向
-                        plt.plot(corner[0], corner[1], 'o', 
-                                color=direction_colors[direction], markersize=18, 
-                                markeredgecolor='black', markeredgewidth=3,
-                                label=f'{direction_labels[i]} Center', zorder=25)
-                
-                # ラベルを追加（より目立つように）
-                offset = label_offsets[direction]
-                label_x = float(corner[0]) + offset[0]
-                label_y = float(corner[1]) + offset[1]
-                plt.text(label_x, label_y, direction_labels[i], 
-                        ha='center', va='center', fontsize=12, weight='bold', 
-                        color='black', 
-                        bbox=dict(boxstyle="round,pad=0.3", facecolor='yellow', alpha=0.9, edgecolor='black', linewidth=2),
-                        zorder=30)
-        
-        plt.title(f"Place: {place} Rotated Coordinates (Debug View)", fontsize=14)
-        plt.xlabel("Rotated Longitude", fontsize=12)
-        plt.ylabel("Rotated Latitude", fontsize=12)
-        plt.legend(fontsize=10, loc='upper right')
-        plt.grid(True, alpha=0.3)
-        plt.axis('equal')
-        
-        # 可視化範囲を自動調整
-        if corners:
-            corner_lons = [corner[0] for corner in corners.values()]
-            corner_lats = [corner[1] for corner in corners.values()]
-            
-            # ポリゴンと角の座標を合わせて範囲を決定
-            all_lons = list(lons) + corner_lons
-            all_lats = list(lats) + corner_lats
-            
-            lon_min, lon_max = min(all_lons), max(all_lons)
-            lat_min, lat_max = min(all_lats), max(all_lats)
-            
-            # マージンを追加
-            lon_margin = (lon_max - lon_min) * 0.1
-            lat_margin = (lat_max - lat_min) * 0.1
-            
-            plt.xlim(lon_min - lon_margin, lon_max + lon_margin)
-            plt.ylim(lat_min - lat_margin, lat_max + lat_margin)
-            
-            # デバッグ: 可視化範囲を確認
-            print(f"🔍 デバッグ: 可視化範囲 - X: {lon_min - lon_margin:.6f} ～ {lon_max + lon_margin:.6f}, Y: {lat_min - lat_margin:.6f} ～ {lat_max + lat_margin:.6f}")
-            
-            # 全ての角の座標と可視化範囲内チェック
-            for direction in ["東", "西", "北", "南", "北東", "北西", "南東", "南西"]:
-                if direction in corners:
-                    x, y = corners[direction]
-                    in_x_range = (lon_min - lon_margin) <= x <= (lon_max + lon_margin)
-                    in_y_range = (lat_min - lat_margin) <= y <= (lat_max + lat_margin)
-                    print(f"🔍 {direction}: ({x:.6f}, {y:.6f}) - X範囲内:{in_x_range}, Y範囲内:{in_y_range}")
-                else:
-                    print(f"🔍 {direction}: 座標なし")
-        
-        # ファイルに保存
-        output_file = f"place_{place.replace(', ', '_').replace(' ', '_')}_rotated_debug.png"
-        plt.savefig(output_file, dpi=150, bbox_inches='tight')
-        print(f"✅ 回転後座標の可視化結果を保存しました: {output_file}")
-        
-        plt.show()
-        
-        # 回転後の座標のみを返す
-        return corners
-        
-    else:
-        print(f"❌ 場所 '{place}' のデータを取得できませんでした")
+    if rotated_coords is None or optimal_angle is None:
+        print("❌ rotated_coords または optimal_angle が None です")
         return None
+    
+    rotated_array = np.array(rotated_coords)
+    
+    # 可視化
+    plt.figure(figsize=(12, 10))
+    
+    # 回転後のポリゴンを描画
+    lons, lats = zip(*rotated_coords)
+    plt.plot(lons, lats, 'b-', linewidth=3, label='Rotated Polygon', alpha=0.7)
+    plt.fill(lons, lats, 'blue', alpha=0.1)
+    
+    # 回転後の中心をプロット
+    center_lon = np.mean(lons)
+    center_lat = np.mean(lats)
+    plt.plot(center_lon, center_lat, 'ko', markersize=15, label='Center', zorder=10)
+    
+    # 回転後の座標から角を決定
+    lons_array = rotated_array[:, 0]
+    lats_array = rotated_array[:, 1]
+    
+    # デバッグ: 回転後の座標範囲を確認
+    print(f"🔍 デバッグ: 回転後の座標範囲 - X: {min(lons_array):.6f} ～ {max(lons_array):.6f}, Y: {min(lats_array):.6f} ～ {max(lats_array):.6f}")
+    print(f"🔍 デバッグ: 回転後の中心座標 - ({center_lon:.6f}, {center_lat:.6f})")
+    
+    # 各方向の角を見つける（回転後の座標系で）
+    corners = calculate_corner_positions(rotated_coords, center_lon, center_lat)
+
+    # 角をプロット
+    if corners:
+        corner_lons = [corner[0] for corner in corners.values()]
+        corner_lats = [corner[1] for corner in corners.values()]
+        plt.plot(corner_lons, corner_lats, 'rx', markersize=15, label='Corners (Rotated)', zorder=12)
+        
+        # デバッグ: corners辞書の内容を確認
+        print(f"🔍 デバッグ: corners辞書の内容 - {list(corners.keys())}")
+        for direction, corner in corners.items():
+            print(f"🔍 デバッグ: {direction} = ({corner[0]:.6f}, {corner[1]:.6f})")
+    
+    # 各方角の辺上位置座標を計算・プロット
+    directions = ["東", "西", "南", "北", "北東", "北西", "南東", "南西"]
+    direction_labels = ["E", "W", "S", "N", "NE", "NW", "SE", "SW"]
+    direction_colors = {
+        "東": "red", "西": "blue", "南": "green", "北": "purple",
+        "北東": "orange", "北西": "brown", "南東": "pink", "南西": "cyan"
+    }
+    
+    # ラベルの位置オフセットを定義
+    label_offsets = {
+        "東": (0.0001, 0),
+        "西": (-0.0001, 0),
+        "南": (0.0001, -0.0001),
+        "北": (0, 0.0001),
+        "北東": (0.0001, 0.0001),
+        "北西": (0.0001, 0.0001),
+        "南東": (0.0001, -0.0001),
+        "南西": (-0.0001, -0.0001)
+    }
+    
+    for i, direction in enumerate(directions):
+        if direction in corners:
+            corner = corners[direction]
+            print(f"🎨 プロット: {direction} - 座標({corner[0]:.6f}, {corner[1]:.6f})")
+            
+            # NE, NW, SE, SWは角として表示
+            if direction in ["北東", "北西", "南東", "南西"]:
+                plt.plot(corner[0], corner[1], 's', 
+                        color=direction_colors[direction], markersize=16, 
+                        markeredgecolor='black', markeredgewidth=3,
+                        label=f'{direction_labels[i]} Corner', zorder=20)
+            else:
+                # N, E, S, Wは中央計算として表示（大きく目立つように）
+                if direction == "南":
+                    # 南側（S）は特に目立つように
+                    plt.plot(corner[0], corner[1], '*', 
+                            color=direction_colors[direction], markersize=25, 
+                            markeredgecolor='black', markeredgewidth=3,
+                            label=f'{direction_labels[i]} Center', zorder=30)
+                else:
+                    # その他の方向
+                    plt.plot(corner[0], corner[1], 'o', 
+                            color=direction_colors[direction], markersize=18, 
+                            markeredgecolor='black', markeredgewidth=3,
+                            label=f'{direction_labels[i]} Center', zorder=25)
+            
+            # ラベルを追加（より目立つように）
+            offset = label_offsets[direction]
+            label_x = float(corner[0]) + offset[0]
+            label_y = float(corner[1]) + offset[1]
+            plt.text(label_x, label_y, direction_labels[i], 
+                    ha='center', va='center', fontsize=12, weight='bold', 
+                    color='black', 
+                    bbox=dict(boxstyle="round,pad=0.3", facecolor='yellow', alpha=0.9, edgecolor='black', linewidth=2),
+                    zorder=30)
+    
+    plt.title(f"Place: Rotated Coordinates (Debug View)", fontsize=14)
+    plt.xlabel("Rotated Longitude", fontsize=12)
+    plt.ylabel("Rotated Latitude", fontsize=12)
+    plt.legend(fontsize=10, loc='upper right')
+    plt.grid(True, alpha=0.3)
+    plt.axis('equal')
+    
+    # 可視化範囲を自動調整
+    if corners:
+        corner_lons = [corner[0] for corner in corners.values()]
+        corner_lats = [corner[1] for corner in corners.values()]
+        
+        # ポリゴンと角の座標を合わせて範囲を決定
+        all_lons = list(lons) + corner_lons
+        all_lats = list(lats) + corner_lats
+        
+        lon_min, lon_max = min(all_lons), max(all_lons)
+        lat_min, lat_max = min(all_lats), max(all_lats)
+        
+        # マージンを追加
+        lon_margin = (lon_max - lon_min) * 0.1
+        lat_margin = (lat_max - lat_min) * 0.1
+        
+        plt.xlim(lon_min - lon_margin, lon_max + lon_margin)
+        plt.ylim(lat_min - lat_margin, lat_max + lat_margin)
+        
+        # デバッグ: 可視化範囲を確認
+        print(f"🔍 デバッグ: 可視化範囲 - X: {lon_min - lon_margin:.6f} ～ {lon_max + lon_margin:.6f}, Y: {lat_min - lat_margin:.6f} ～ {lat_max + lat_margin:.6f}")
+        
+        # 全ての角の座標と可視化範囲内チェック
+        for direction in ["東", "西", "北", "南", "北東", "北西", "南東", "南西"]:
+            if direction in corners:
+                x, y = corners[direction]
+                in_x_range = (lon_min - lon_margin) <= x <= (lon_max + lon_margin)
+                in_y_range = (lat_min - lat_margin) <= y <= (lat_max + lat_margin)
+                print(f"🔍 {direction}: ({x:.6f}, {y:.6f}) - X範囲内:{in_x_range}, Y範囲内:{in_y_range}")
+            else:
+                print(f"🔍 {direction}: 座標なし")
+    
+    # ファイルに保存
+    output_file = f"place_rotated_debug.png"
+    plt.savefig(output_file, dpi=150, bbox_inches='tight')
+    print(f"✅ 回転後座標の可視化結果を保存しました: {output_file}")
+    
+    plt.show()
+    
+    # 回転後の座標のみを返す
+    return corners
 
 # メイン実行部分
 if __name__ == "__main__":
@@ -1290,9 +1239,19 @@ if __name__ == "__main__":
             optimal_angle = determine_shape_orientation(original_coords)
             print(f"🔄 形状の最適回転角度: {np.degrees(optimal_angle):.1f}度")
     
+    # 回転後の座標を事前に計算
+    rotated_coords = None
+    if original_coords and optimal_angle is not None:
+        rotated_coords = rotate_coordinates(original_coords, optimal_angle)
+        print(f"🔄 回転後の座標を計算しました（{len(rotated_coords)}点）")
+    
     # 回転後の座標系で可視化（デバッグ用）
     print("\n🔍 回転後の座標系で可視化（デバッグ）:")
-    rotated_corners = visualize_rotated_positions(PLACE)
+    if rotated_coords is not None and optimal_angle is not None:
+        rotated_corners = visualize_rotated_positions(rotated_coords, optimal_angle)
+    else:
+        print("❌ 回転後の座標または角度が計算できませんでした")
+        rotated_corners = None
     
     # 回転後の座標を元の座標系に戻す
     corners_data = None
@@ -1345,6 +1304,9 @@ if __name__ == "__main__":
                 print(f"| {direction} | ({rotated_back[0]:.6f}, {rotated_back[1]:.6f}) | ({api[0]:.6f}, {api[1]:.6f}) | {total_diff_m:.2f} |")
     
     print("\n🎨 可視化を実行中...")
-    visualize_with_direction_positions(PLACE)
+    if corners_data is not None and original_coords is not None:
+        visualize_with_direction_positions(corners_data, original_coords)
+    else:
+        print("❌ corners_data または original_coords が None です")
     
     print("\n💡 人間の形状認識に基づくアルゴリズムで高速にデータを取得しました")
