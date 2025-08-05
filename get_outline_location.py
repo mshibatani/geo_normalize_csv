@@ -725,7 +725,7 @@ def get_location_by_direction(place, direction):
         direction: 方角 ("東", "西", "南", "北", "北東", "北西", "南東", "南西")
     
     Returns:
-        (lon, lat): 辺上の位置座標（ポリゴンの線上）
+        (lon, lat): 辺上の位置座標（ポリゴンの線上、回転前の元の座標系）
     """
     # osmnxでデータを取得
     gdf = get_place_polygon(place)
@@ -845,6 +845,12 @@ def visualize_with_direction_positions(place):
 def visualize_rotated_positions(place):
     """
     回転後の座標系で位置を可視化する関数（デバッグ用）
+    
+    Args:
+        place: 検索する場所名
+        
+    Returns:
+        dict: 計算された各方向の座標（回転後の座標系）
     """
     # osmnxでデータを取得
     gdf = get_place_polygon(place)
@@ -1153,8 +1159,12 @@ def visualize_rotated_positions(place):
         
         plt.show()
         
+        # 計算された座標を返す
+        return corners
+        
     else:
         print(f"❌ 場所 '{place}' のデータを取得できませんでした")
+        return None
 
 # メイン実行部分
 if __name__ == "__main__":
@@ -1163,14 +1173,23 @@ if __name__ == "__main__":
     
     # 回転後の座標系で可視化（デバッグ用）
     print("\n🔍 回転後の座標系で可視化（デバッグ）:")
-    visualize_rotated_positions(PLACE)
+    rotated_corners = visualize_rotated_positions(PLACE)
+    
+    # 回転後の座標を保存
+    if rotated_corners:
+        print("\n💾 回転後の座標を保存しました:")
+        for direction, coords in rotated_corners.items():
+            print(f"  - {direction}: ({coords[0]:.6f}, {coords[1]:.6f})")
     
     # 全方角の辺上位置座標を計算
     directions = ["東", "西", "南", "北", "北東", "北西", "南東", "南西"]
     
     print("\n📍 各方向の辺上位置座標（人間の形状認識ベース）:")
+    original_corners = {}
     for direction in directions:
-        get_location_by_direction(PLACE, direction)
+        coords = get_location_by_direction(PLACE, direction)
+        if coords:
+            original_corners[direction] = coords
     
     print("\n🎨 可視化を実行中...")
     visualize_with_direction_positions(PLACE)
