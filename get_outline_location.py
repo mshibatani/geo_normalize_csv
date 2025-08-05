@@ -14,15 +14,15 @@ plt.rcParams['axes.unicode_minus'] = False
 # PLACE = "長沼公園, 八王子市, 日本"
 PLACE = "多摩動物園, 日野市, 日本"
 
-def get_place_polygon(place):
+def get_place_geodataframe(place):
     """
-    osmnxを使って場所からポリゴンデータを取得する関数
+    osmnxを使って場所からGeoDataFrameを取得する関数
     
     Args:
         place: 検索する場所名
     
     Returns:
-        GeoDataFrame: 場所のポリゴンデータ
+        GeoDataFrame: 場所のGeoDataFrame
     """
     try:
         print(f"🌐 場所 '{place}' のデータをosmnxから取得中...")
@@ -1218,7 +1218,7 @@ if __name__ == "__main__":
     print("🧠 人間の形状認識に基づくアルゴリズムで各方向の位置を決定します")
     
     # 元のポリゴン座標を取得
-    gdf = get_place_polygon(PLACE)
+    gdf = get_place_geodataframe(PLACE)
     original_coordinates = None
     optimal_angle = None
     
