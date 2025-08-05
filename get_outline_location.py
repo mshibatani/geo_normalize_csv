@@ -176,6 +176,143 @@ def rotate_coordinates_back(coords, angle, original_centroid=None):
     else:
         return final_coords.tolist()
 
+def calculate_corner_positions(rotated_coords, center_lon, center_lat):
+    """
+    回転後の座標系で各方向の角（東西南北および四隅）の位置を計算する関数
+    
+    Args:
+        rotated_coords: 回転後の座標リスト [(x, y), ...]
+        center_lon: 回転後の中心経度
+        center_lat: 回転後の中心緯度
+        
+    Returns:
+        dict: 各方向の角の座標を含む辞書 {"方向": (x, y), ...}
+    """
+    # 座標配列をnumpy配列に変換
+    coords_array = np.array(rotated_coords)
+    lons_array = coords_array[:, 0]
+    lats_array = coords_array[:, 1]
+    
+    corners = {}
+    
+    # まず4つの角（NE, NW, SE, SW）を計算してから、E、W、N、Sを中点として計算
+    
+    # 北東側の角（北東象限で最も外側）
+    ne_indices = np.where((lats_array > center_lat) & (lons_array > center_lon))[0]
+    if len(ne_indices) > 0:
+        ne_distances = (lats_array[ne_indices] - center_lat) + (lons_array[ne_indices] - center_lon)
+        ne_idx = ne_indices[np.argmax(ne_distances)]
+        corners["北東"] = (lons_array[ne_idx], lats_array[ne_idx])
+    
+    # 北西側の角（北西象限で最も外側）
+    nw_indices = np.where((lats_array > center_lat) & (lons_array < center_lon))[0]
+    if len(nw_indices) > 0:
+        nw_distances = (lats_array[nw_indices] - center_lat) + (center_lon - lons_array[nw_indices])
+        nw_idx = nw_indices[np.argmax(nw_distances)]
+        corners["北西"] = (lons_array[nw_idx], lats_array[nw_idx])
+    
+    # 南東側の角（南東象限で最も外側）
+    se_indices = np.where((lats_array < center_lat) & (lons_array > center_lon))[0]
+    if len(se_indices) > 0:
+        se_distances = (center_lat - lats_array[se_indices]) + (lons_array[se_indices] - center_lon)
+        se_idx = se_indices[np.argmax(se_distances)]
+        corners["南東"] = (lons_array[se_idx], lats_array[se_idx])
+    
+    # 南西側の角（南西象限で最も外側）
+    sw_indices = np.where((lats_array < center_lat) & (lons_array < center_lon))[0]
+    if len(sw_indices) > 0:
+        sw_distances = (center_lat - lats_array[sw_indices]) + (center_lon - lons_array[sw_indices])
+        sw_idx = sw_indices[np.argmax(sw_distances)]
+        corners["南西"] = (lons_array[sw_idx], lats_array[sw_idx])
+    
+    # デバッグ: 各角の位置を確認
+    print(f"🔍 角の確認: NE=({corners.get('北東', 'なし')}), NW=({corners.get('北西', 'なし')})")
+    print(f"🔍 角の確認: SE=({corners.get('南東', 'なし')}), SW=({corners.get('南西', 'なし')})")
+    
+    # 正しいE、W、N、Sの計算（ポリゴンの線上に垂直投影）
+    print(f"🔍 東側計算開始...")
+    if "北東" in corners and "南東" in corners:
+        # E: NE-SE間の線上（東側の辺）
+        ne_corner = corners["北東"]
+        se_corner = corners["南東"]
+        center_point = ((ne_corner[0] + se_corner[0]) / 2, (ne_corner[1] + se_corner[1]) / 2)
+        print(f"🔍 東側: NE=({ne_corner[0]:.6f}, {ne_corner[1]:.6f}), SE=({se_corner[0]:.6f}, {se_corner[1]:.6f}), 中点=({center_point[0]:.6f}, {center_point[1]:.6f})")
+        projected_point = find_perpendicular_projection_on_edge(ne_corner, se_corner, center_point, rotated_coords, "east")
+        if projected_point:
+            corners["東"] = projected_point
+            print(f"🔍 デバッグ: 東側の垂直投影 - 座標: ({corners['東'][0]:.6f}, {corners['東'][1]:.6f})")
+        else:
+            corners["東"] = center_point  # フォールバック
+            print(f"🔍 デバッグ: 東側の垂直投影失敗、中点使用 - 座標: ({corners['東'][0]:.6f}, {corners['東'][1]:.6f})")
+
+    print(f"🔍 西側計算開始...")
+    if "北西" in corners and "南西" in corners:
+        # W: NW-SW間の線上（西側の辺）
+        nw_corner = corners["北西"]
+        sw_corner = corners["南西"]
+        center_point = ((nw_corner[0] + sw_corner[0]) / 2, (nw_corner[1] + sw_corner[1]) / 2)
+        print(f"🔍 西側: NW=({nw_corner[0]:.6f}, {nw_corner[1]:.6f}), SW=({sw_corner[0]:.6f}, {sw_corner[1]:.6f}), 中点=({center_point[0]:.6f}, {center_point[1]:.6f})")
+        projected_point = find_perpendicular_projection_on_edge(nw_corner, sw_corner, center_point, rotated_coords, "west")
+        if projected_point:
+            corners["西"] = projected_point
+            print(f"🔍 デバッグ: 西側の垂直投影 - 座標: ({corners['西'][0]:.6f}, {corners['西'][1]:.6f})")
+        else:
+            corners["西"] = center_point  # フォールバック
+            print(f"🔍 デバッグ: 西側の垂直投影失敗、中点使用 - 座標: ({corners['西'][0]:.6f}, {corners['西'][1]:.6f})")
+
+    print(f"🔍 北側計算開始...")
+    if "北東" in corners and "北西" in corners:
+        # N: NW-NE間の線上（北側の辺）
+        nw_corner = corners["北西"]
+        ne_corner = corners["北東"]
+        center_point = ((nw_corner[0] + ne_corner[0]) / 2, (nw_corner[1] + ne_corner[1]) / 2)
+        print(f"🔍 北側: NW=({nw_corner[0]:.6f}, {nw_corner[1]:.6f}), NE=({ne_corner[0]:.6f}, {ne_corner[1]:.6f}), 中点=({center_point[0]:.6f}, {center_point[1]:.6f})")
+        projected_point = find_perpendicular_projection_on_edge(nw_corner, ne_corner, center_point, rotated_coords, "north")
+        if projected_point:
+            corners["北"] = projected_point
+            print(f"🔍 デバッグ: 北側の垂直投影 - 座標: ({corners['北'][0]:.6f}, {corners['北'][1]:.6f})")
+        else:
+            corners["北"] = center_point  # フォールバック
+            print(f"🔍 デバッグ: 北側の垂直投影失敗、中点使用 - 座標: ({corners['北'][0]:.6f}, {corners['北'][1]:.6f})")
+
+    print(f"🔍 南側計算開始...")
+    if "南東" in corners and "南西" in corners:
+        # S: SW-SE間の線上（南側の辺）
+        # 重要: 仕様書に従い、Sは必ずSW-SE間のポリゴン線上に配置すること
+        # EとSが重複しないよう、SE-NE間ではなくSW-SE間を使用する
+        sw_corner = corners["南西"]
+        se_corner = corners["南東"]
+        
+        # ポリゴン上のSW-SE間の実際の辺を取得
+        sw_se_edge = find_polygon_edge_between_points(rotated_coords, sw_corner, se_corner)
+        
+        if sw_se_edge:
+            # 辺の中点を計算
+            edge_midpoint_idx = len(sw_se_edge) // 2
+            if len(sw_se_edge) % 2 == 0:  # 偶数個の点がある場合
+                p1 = sw_se_edge[edge_midpoint_idx - 1]
+                p2 = sw_se_edge[edge_midpoint_idx]
+                center_point = ((p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2)
+            else:  # 奇数個の点がある場合
+                center_point = sw_se_edge[edge_midpoint_idx]
+            
+            corners["南"] = center_point
+            print(f"🔍 南側: SW=({sw_corner[0]:.6f}, {sw_corner[1]:.6f}), SE=({se_corner[0]:.6f}, {se_corner[1]:.6f})")
+            print(f"🔍 南側: ポリゴン辺上の中点=({center_point[0]:.6f}, {center_point[1]:.6f}), 辺の点数={len(sw_se_edge)}")
+        else:
+            # 辺が見つからない場合は従来の方法でフォールバック
+            center_point = ((sw_corner[0] + se_corner[0]) / 2, (sw_corner[1] + se_corner[1]) / 2)
+            print(f"🔍 南側: SW=({sw_corner[0]:.6f}, {sw_corner[1]:.6f}), SE=({se_corner[0]:.6f}, {se_corner[1]:.6f}), 中点=({center_point[0]:.6f}, {center_point[1]:.6f})")
+            projected_point = find_perpendicular_projection_on_edge(sw_corner, se_corner, center_point, rotated_coords, "south")
+            if projected_point:
+                corners["南"] = projected_point
+                print(f"🔍 デバッグ: 南側の垂直投影 - 座標: ({corners['南'][0]:.6f}, {corners['南'][1]:.6f})")
+            else:
+                corners["南"] = center_point  # フォールバック
+                print(f"🔍 デバッグ: 南側の垂直投影失敗、中点使用 - 座標: ({corners['南'][0]:.6f}, {corners['南'][1]:.6f})")
+    
+    return corners
+
 def convert_rotated_to_original(rotated_corners, angle, original_coords=None):
     """
     回転後の座標を元の座標系に戻す関数
@@ -443,6 +580,44 @@ def find_polygon_edge_between_points(coords, point1, point2):
     
     print(f"🔍 ポリゴン上の辺を特定: {len(edge_points)}点で構成")
     return edge_points
+
+def visualize_polygon_edge(coords, point1, point2):
+    """
+    2つの点を結ぶポリゴン上の辺を可視化する関数（デバッグ用）
+    
+    Args:
+        coords: ポリゴンの座標リスト [(x, y), ...]
+        point1: 始点の座標 (x, y)
+        point2: 終点の座標 (x, y)
+    """
+    # ポリゴン上のpoint1-point2間の実際の辺を取得
+    edge = find_polygon_edge_between_points(coords, point1, point2)
+    
+    if edge and len(edge) > 1:
+        # 辺の各セグメントを赤色の太い線で描画
+        edge_lons = [p[0] for p in edge]
+        edge_lats = [p[1] for p in edge]
+        plt.plot(edge_lons, edge_lats, 
+                 'r-', linewidth=8, label='Polygon Edge (Debug)', alpha=1.0, zorder=15)
+        
+        # 辺の各点に小さなマーカーを追加
+        plt.plot(edge_lons, edge_lats, 
+                 'ro', markersize=6, markeredgecolor='black', markeredgewidth=1, 
+                 alpha=0.7, zorder=16)
+        
+        # 辺の両端に大きなマーカーを追加
+        plt.plot([edge[0][0], edge[-1][0]], [edge[0][1], edge[-1][1]], 
+                 'ro', markersize=12, markeredgecolor='black', markeredgewidth=2, 
+                 alpha=1.0, zorder=17)
+    else:
+        # 辺が見つからない場合は直線で代用
+        plt.plot([point2[0], point1[0]], [point2[1], point1[1]], 
+                 'r-', linewidth=8, label='Direct Line (Debug)', alpha=1.0, zorder=15)
+        
+        # 線分の両端に大きなマーカーを追加
+        plt.plot([point2[0], point1[0]], [point2[1], point1[1]], 
+                 'ro', markersize=12, markeredgecolor='black', markeredgewidth=2, 
+                 alpha=1.0, zorder=16)
 
 def point_to_line_segment_distance(point, line_start, line_end):
     """
@@ -975,157 +1150,7 @@ def visualize_rotated_positions(place):
         print(f"🔍 デバッグ: 回転後の中心座標 - ({center_lon:.6f}, {center_lat:.6f})")
         
         # 各方向の角を見つける（回転後の座標系で）
-        corners = {}
-        
-        # まず4つの角（NE, NW, SE, SW）を計算してから、E、W、N、Sを中点として計算
-        
-        # 北東側の角（北東象限で最も外側）
-        ne_indices = np.where((lats_array > center_lat) & (lons_array > center_lon))[0]
-        if len(ne_indices) > 0:
-            ne_distances = (lats_array[ne_indices] - center_lat) + (lons_array[ne_indices] - center_lon)
-            ne_idx = ne_indices[np.argmax(ne_distances)]
-            corners["北東"] = (lons_array[ne_idx], lats_array[ne_idx])
-        
-        # 北西側の角（北西象限で最も外側）
-        nw_indices = np.where((lats_array > center_lat) & (lons_array < center_lon))[0]
-        if len(nw_indices) > 0:
-            nw_distances = (lats_array[nw_indices] - center_lat) + (center_lon - lons_array[nw_indices])
-            nw_idx = nw_indices[np.argmax(nw_distances)]
-            corners["北西"] = (lons_array[nw_idx], lats_array[nw_idx])
-        
-        # 南東側の角（南東象限で最も外側）
-        se_indices = np.where((lats_array < center_lat) & (lons_array > center_lon))[0]
-        if len(se_indices) > 0:
-            se_distances = (center_lat - lats_array[se_indices]) + (lons_array[se_indices] - center_lon)
-            se_idx = se_indices[np.argmax(se_distances)]
-            corners["南東"] = (lons_array[se_idx], lats_array[se_idx])
-        
-        # 南西側の角（南西象限で最も外側）
-        sw_indices = np.where((lats_array < center_lat) & (lons_array < center_lon))[0]
-        if len(sw_indices) > 0:
-            sw_distances = (center_lat - lats_array[sw_indices]) + (center_lon - lons_array[sw_indices])
-            sw_idx = sw_indices[np.argmax(sw_distances)]
-            corners["南西"] = (lons_array[sw_idx], lats_array[sw_idx])
-        
-        # デバッグ: 各角の位置を確認
-        print(f"🔍 角の確認: NE=({corners.get('北東', 'なし')}), NW=({corners.get('北西', 'なし')})")
-        print(f"🔍 角の確認: SE=({corners.get('南東', 'なし')}), SW=({corners.get('南西', 'なし')})")
-        
-        # 正しいE、W、N、Sの計算（ポリゴンの線上に垂直投影）
-        print(f"🔍 東側計算開始...")
-        if "北東" in corners and "南東" in corners:
-            # E: NE-SE間の線上（東側の辺）
-            ne_corner = corners["北東"]
-            se_corner = corners["南東"]
-            center_point = ((ne_corner[0] + se_corner[0]) / 2, (ne_corner[1] + se_corner[1]) / 2)
-            print(f"🔍 東側: NE=({ne_corner[0]:.6f}, {ne_corner[1]:.6f}), SE=({se_corner[0]:.6f}, {se_corner[1]:.6f}), 中点=({center_point[0]:.6f}, {center_point[1]:.6f})")
-            projected_point = find_perpendicular_projection_on_edge(ne_corner, se_corner, center_point, rotated_coords, "east")
-            if projected_point:
-                corners["東"] = projected_point
-                print(f"🔍 デバッグ: 東側の垂直投影 - 座標: ({corners['東'][0]:.6f}, {corners['東'][1]:.6f})")
-            else:
-                corners["東"] = center_point  # フォールバック
-                print(f"🔍 デバッグ: 東側の垂直投影失敗、中点使用 - 座標: ({corners['東'][0]:.6f}, {corners['東'][1]:.6f})")
-
-        print(f"🔍 西側計算開始...")
-        if "北西" in corners and "南西" in corners:
-            # W: NW-SW間の線上（西側の辺）
-            nw_corner = corners["北西"]
-            sw_corner = corners["南西"]
-            center_point = ((nw_corner[0] + sw_corner[0]) / 2, (nw_corner[1] + sw_corner[1]) / 2)
-            print(f"🔍 西側: NW=({nw_corner[0]:.6f}, {nw_corner[1]:.6f}), SW=({sw_corner[0]:.6f}, {sw_corner[1]:.6f}), 中点=({center_point[0]:.6f}, {center_point[1]:.6f})")
-            projected_point = find_perpendicular_projection_on_edge(nw_corner, sw_corner, center_point, rotated_coords, "west")
-            if projected_point:
-                corners["西"] = projected_point
-                print(f"🔍 デバッグ: 西側の垂直投影 - 座標: ({corners['西'][0]:.6f}, {corners['西'][1]:.6f})")
-            else:
-                corners["西"] = center_point  # フォールバック
-                print(f"🔍 デバッグ: 西側の垂直投影失敗、中点使用 - 座標: ({corners['西'][0]:.6f}, {corners['西'][1]:.6f})")
-
-        print(f"🔍 北側計算開始...")
-        if "北東" in corners and "北西" in corners:
-            # N: NW-NE間の線上（北側の辺）
-            nw_corner = corners["北西"]
-            ne_corner = corners["北東"]
-            center_point = ((nw_corner[0] + ne_corner[0]) / 2, (nw_corner[1] + ne_corner[1]) / 2)
-            print(f"🔍 北側: NW=({nw_corner[0]:.6f}, {nw_corner[1]:.6f}), NE=({ne_corner[0]:.6f}, {ne_corner[1]:.6f}), 中点=({center_point[0]:.6f}, {center_point[1]:.6f})")
-            projected_point = find_perpendicular_projection_on_edge(nw_corner, ne_corner, center_point, rotated_coords, "north")
-            if projected_point:
-                corners["北"] = projected_point
-                print(f"🔍 デバッグ: 北側の垂直投影 - 座標: ({corners['北'][0]:.6f}, {corners['北'][1]:.6f})")
-            else:
-                corners["北"] = center_point  # フォールバック
-                print(f"🔍 デバッグ: 北側の垂直投影失敗、中点使用 - 座標: ({corners['北'][0]:.6f}, {corners['北'][1]:.6f})")
-
-        print(f"🔍 南側計算開始...")
-        if "南東" in corners and "南西" in corners:
-            # S: SW-SE間の線上（南側の辺）
-            # 重要: 仕様書に従い、Sは必ずSW-SE間のポリゴン線上に配置すること
-            # EとSが重複しないよう、SE-NE間ではなくSW-SE間を使用する
-            sw_corner = corners["南西"]
-            se_corner = corners["南東"]
-            
-            # ポリゴン上のSW-SE間の実際の辺を取得
-            sw_se_edge = find_polygon_edge_between_points(rotated_coords, sw_corner, se_corner)
-            
-            if sw_se_edge:
-                # 辺の中点を計算
-                edge_midpoint_idx = len(sw_se_edge) // 2
-                if len(sw_se_edge) % 2 == 0:  # 偶数個の点がある場合
-                    p1 = sw_se_edge[edge_midpoint_idx - 1]
-                    p2 = sw_se_edge[edge_midpoint_idx]
-                    center_point = ((p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2)
-                else:  # 奇数個の点がある場合
-                    center_point = sw_se_edge[edge_midpoint_idx]
-                
-                corners["南"] = center_point
-                print(f"🔍 南側: SW=({sw_corner[0]:.6f}, {sw_corner[1]:.6f}), SE=({se_corner[0]:.6f}, {se_corner[1]:.6f})")
-                print(f"🔍 南側: ポリゴン辺上の中点=({center_point[0]:.6f}, {center_point[1]:.6f}), 辺の点数={len(sw_se_edge)}")
-            else:
-                # 辺が見つからない場合は従来の方法でフォールバック
-                center_point = ((sw_corner[0] + se_corner[0]) / 2, (sw_corner[1] + se_corner[1]) / 2)
-                print(f"🔍 南側: SW=({sw_corner[0]:.6f}, {sw_corner[1]:.6f}), SE=({se_corner[0]:.6f}, {se_corner[1]:.6f}), 中点=({center_point[0]:.6f}, {center_point[1]:.6f})")
-                projected_point = find_perpendicular_projection_on_edge(sw_corner, se_corner, center_point, rotated_coords, "south")
-                if projected_point:
-                    corners["南"] = projected_point
-                    print(f"🔍 デバッグ: 南側の垂直投影 - 座標: ({corners['南'][0]:.6f}, {corners['南'][1]:.6f})")
-                else:
-                    corners["南"] = center_point  # フォールバック
-                    print(f"🔍 デバッグ: 南側の垂直投影失敗、中点使用 - 座標: ({corners['南'][0]:.6f}, {corners['南'][1]:.6f})")
-        
-        # デバッグ用：SW-SE間のポリゴン辺を強調表示（赤色の太い線）
-        if "南東" in corners and "南西" in corners:
-            se_corner = corners["南東"]
-            sw_corner = corners["南西"]
-            
-            # ポリゴン上のSW-SE間の実際の辺を取得
-            sw_se_edge = find_polygon_edge_between_points(rotated_coords, sw_corner, se_corner)
-            
-            if sw_se_edge and len(sw_se_edge) > 1:
-                # 辺の各セグメントを赤色の太い線で描画
-                edge_lons = [p[0] for p in sw_se_edge]
-                edge_lats = [p[1] for p in sw_se_edge]
-                plt.plot(edge_lons, edge_lats, 
-                         'r-', linewidth=8, label='SW-SE Polygon Edge (Debug)', alpha=1.0, zorder=15)
-                
-                # 辺の各点に小さなマーカーを追加
-                plt.plot(edge_lons, edge_lats, 
-                         'ro', markersize=6, markeredgecolor='black', markeredgewidth=1, 
-                         alpha=0.7, zorder=16)
-                
-                # 辺の両端に大きなマーカーを追加
-                plt.plot([sw_se_edge[0][0], sw_se_edge[-1][0]], [sw_se_edge[0][1], sw_se_edge[-1][1]], 
-                         'ro', markersize=12, markeredgecolor='black', markeredgewidth=2, 
-                         alpha=1.0, zorder=17)
-            else:
-                # 辺が見つからない場合は直線で代用
-                plt.plot([se_corner[0], sw_corner[0]], [se_corner[1], sw_corner[1]], 
-                         'r-', linewidth=8, label='SE-SW Line (Debug)', alpha=1.0, zorder=15)
-                
-                # 線分の両端に大きなマーカーを追加
-                plt.plot([se_corner[0], sw_corner[0]], [se_corner[1], sw_corner[1]], 
-                         'ro', markersize=12, markeredgecolor='black', markeredgewidth=2, 
-                         alpha=1.0, zorder=16)
+        corners = calculate_corner_positions(rotated_coords, center_lon, center_lat)
 
         # 角をプロット
         if corners:
