@@ -5,14 +5,66 @@ import geopandas as gpd
 from scipy.spatial import ConvexHull
 from scipy.optimize import minimize
 
+import logging
+
+# logging設定
+def setup_logging(level=logging.INFO):
+    """
+    logging設定を行う関数
+    
+    Args:
+        level: ログレベル（デフォルト: INFO）
+    """
+    # ログフォーマットを設定
+    formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    
+    # ルートロガーを設定
+    logger = logging.getLogger()
+    logger.setLevel(level)
+    
+    # 既存のハンドラーをクリア
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
+    
+    # コンソールハンドラーを追加
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(level)
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+    
+    # ファイルハンドラーを追加（オプション）
+    file_handler = logging.FileHandler('get_outline_location.log', encoding='utf-8')
+    file_handler.setLevel(logging.DEBUG)  # ファイルには全てのログを記録
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+
+# ログレベルを設定（環境変数から取得可能）
+import os
+log_level = os.getenv('LOG_LEVEL', 'INFO').upper()
+if log_level == 'DEBUG':
+    setup_logging(logging.DEBUG)
+elif log_level == 'INFO':
+    setup_logging(logging.INFO)
+elif log_level == 'WARNING':
+    setup_logging(logging.WARNING)
+elif log_level == 'ERROR':
+    setup_logging(logging.ERROR)
+else:
+    setup_logging(logging.INFO)
+
+logger = logging.getLogger(__name__)
+
 # フォント設定を簡素化（エラー回避）
 plt.rcParams['font.sans-serif'] = ['Arial', 'DejaVu Sans']
 plt.rcParams['axes.unicode_minus'] = False
 
 # 対象の場所（例：東京駅）
-# PLACE = "みなみ野毘沙門の丘緑地, 八王子市, 日本"
+PLACE = "みなみ野毘沙門の丘緑地, 八王子市, 日本"
 # PLACE = "長沼公園, 八王子市, 日本"
-PLACE = "多摩動物園, 日野市, 日本"
+# PLACE = "多摩動物園, 日野市, 日本"
 
 def get_geodataframe_place(place):
     """
@@ -25,17 +77,17 @@ def get_geodataframe_place(place):
         GeoDataFrame: 場所のGeoDataFrame
     """
     try:
-        print(f"🌐 場所 '{place}' のデータをosmnxから取得中...")
+        logger.info(f"🌐 場所 '{place}' のデータをosmnxから取得中...")
         gdf = ox.geocode_to_gdf(place)
         
         if gdf.empty:
-            print(f"❌ 場所 '{place}' が見つかりませんでした")
+            logger.error(f"❌ 場所 '{place}' が見つかりませんでした")
             return None
         else:
-            print(f"✅ 場所 '{place}' のデータを正常に取得しました")
+            logger.info(f"✅ 場所 '{place}' のデータを正常に取得しました")
             return gdf
     except Exception as e:
-        print(f"❌ エラー: {e}")
+        logger.error(f"❌ エラー: {e}")
         return None
 
 def get_geodataframe_address(address):
@@ -49,12 +101,12 @@ def get_geodataframe_address(address):
         GeoDataFrame: 住所のGeoDataFrame
     """
     try:
-        print(f"🏠 住所 '{address}' のデータをosmnxから取得中...")
+        logger.info(f"🏠 住所 '{address}' のデータをosmnxから取得中...")
         
         # 住所から座標を取得
         coordinates = ox.geocoder.geocode(address)
         if coordinates is None:
-            print(f"❌ 住所 '{address}' の座標を取得できませんでした")
+            logger.error(f"❌ 住所 '{address}' の座標を取得できませんでした")
             return None
         
         # 座標から周辺のポリゴンデータを取得
@@ -62,13 +114,70 @@ def get_geodataframe_address(address):
         gdf = ox.geocode_to_gdf(f"{coordinates[1]:.6f},{coordinates[0]:.6f}")
         
         if gdf.empty:
-            print(f"❌ 住所 '{address}' の周辺データを取得できませんでした")
+            logger.error(f"❌ 住所 '{address}' の周辺データを取得できませんでした")
             return None
         else:
-            print(f"✅ 住所 '{address}' のデータを正常に取得しました")
+            logger.info(f"✅ 住所 '{address}' のデータを正常に取得しました")
             return gdf
     except Exception as e:
-        print(f"❌ エラー: {e}")
+        logger.error(f"❌ エラー: {e}")
+        return None
+
+def get_coordinates_directions(gdf):
+    """
+    GeoDataFrameから方向別の座標を取得する関数（ライブラリのメインインターフェイス）
+    
+    Args:
+        gdf: GeoDataFrame（場所の地理データ）
+    
+    Returns:
+        dict: 方向別の座標辞書（rotated_backされた座標）
+        {
+            "東": (lon, lat),
+            "西": (lon, lat),
+            "南": (lon, lat),
+            "北": (lon, lat),
+            "北東": (lon, lat),
+            "北西": (lon, lat),
+            "南東": (lon, lat),
+            "南西": (lon, lat)
+        }
+    """
+    if gdf is None or gdf.empty:
+        logger.error("❌ GeoDataFrameが空です")
+        return None
+    
+    try:
+        # 座標を抽出
+        geometry = gdf.geometry.iloc[0]
+        if hasattr(geometry, 'exterior'):
+            original_coordinates = list(geometry.exterior.coords)
+        else:
+            logger.error("❌ 座標を抽出できませんでした")
+            return None
+        
+        # 形状の向きを判定
+        optimal_angle = determine_shape_orientation(original_coordinates)
+        
+        # 座標を回転
+        rotated_coordinates = rotate_coordinates(original_coordinates, optimal_angle)
+        
+        # 回転後の座標系で角位置を計算
+        rotated_corner_positions = calculate_corner_positions(rotated_coordinates, 
+                                                             np.mean(rotated_coordinates, axis=0)[0],
+                                                             np.mean(rotated_coordinates, axis=0)[1])
+        
+        # 回転後の座標を元の座標系に戻す
+        corner_positions = convert_rotated_to_original(rotated_corner_positions, optimal_angle, original_coordinates)
+        
+        if corner_positions and "original" in corner_positions:
+            return corner_positions["original"]
+        else:
+            logger.error("❌ 座標変換に失敗しました")
+            return None
+            
+    except Exception as e:
+        logger.error(f"❌ 座標計算中にエラーが発生しました: {e}")
         return None
 
 def determine_shape_orientation(coordinates):
@@ -261,56 +370,56 @@ def calculate_corner_positions(rotated_coordinates, center_lon, center_lat):
         corner_positions["南西"] = (lons_array[sw_idx], lats_array[sw_idx])
     
     # デバッグ: 各角の位置を確認
-    print(f"🔍 角の確認: NE=({corner_positions.get('北東', 'なし')}), NW=({corner_positions.get('北西', 'なし')})")
-    print(f"🔍 角の確認: SE=({corner_positions.get('南東', 'なし')}), SW=({corner_positions.get('南西', 'なし')})")
+    logger.debug(f"🔍 角の確認: NE=({corner_positions.get('北東', 'なし')}), NW=({corner_positions.get('北西', 'なし')})")
+    logger.debug(f"🔍 角の確認: SE=({corner_positions.get('南東', 'なし')}), SW=({corner_positions.get('南西', 'なし')})")
     
     # 正しいE、W、N、Sの計算（ポリゴンの線上に垂直投影）
-    print(f"🔍 東側計算開始...")
+    logger.debug(f"🔍 東側計算開始...")
     if "北東" in corner_positions and "南東" in corner_positions:
         # E: NE-SE間の線上（東側の辺）
         ne_corner = corner_positions["北東"]
         se_corner = corner_positions["南東"]
         center_point = ((ne_corner[0] + se_corner[0]) / 2, (ne_corner[1] + se_corner[1]) / 2)
-        print(f"🔍 東側: NE=({ne_corner[0]:.6f}, {ne_corner[1]:.6f}), SE=({se_corner[0]:.6f}, {se_corner[1]:.6f}), 中点=({center_point[0]:.6f}, {center_point[1]:.6f})")
+        logger.debug(f"🔍 東側: NE=({ne_corner[0]:.6f}, {ne_corner[1]:.6f}), SE=({se_corner[0]:.6f}, {se_corner[1]:.6f}), 中点=({center_point[0]:.6f}, {center_point[1]:.6f})")
         projected_point = find_perpendicular_projection_on_edge(ne_corner, se_corner, center_point, rotated_coordinates, "east")
         if projected_point:
             corner_positions["東"] = projected_point
-            print(f"🔍 デバッグ: 東側の垂直投影 - 座標: ({corner_positions['東'][0]:.6f}, {corner_positions['東'][1]:.6f})")
+            logger.debug(f"🔍 デバッグ: 東側の垂直投影 - 座標: ({corner_positions['東'][0]:.6f}, {corner_positions['東'][1]:.6f})")
         else:
             corner_positions["東"] = center_point  # フォールバック
-            print(f"🔍 デバッグ: 東側の垂直投影失敗、中点使用 - 座標: ({corner_positions['東'][0]:.6f}, {corner_positions['東'][1]:.6f})")
+            logger.debug(f"🔍 デバッグ: 東側の垂直投影失敗、中点使用 - 座標: ({corner_positions['東'][0]:.6f}, {corner_positions['東'][1]:.6f})")
 
-    print(f"🔍 西側計算開始...")
+    logger.debug(f"🔍 西側計算開始...")
     if "北西" in corner_positions and "南西" in corner_positions:
         # W: NW-SW間の線上（西側の辺）
         nw_corner = corner_positions["北西"]
         sw_corner = corner_positions["南西"]
         center_point = ((nw_corner[0] + sw_corner[0]) / 2, (nw_corner[1] + sw_corner[1]) / 2)
-        print(f"🔍 西側: NW=({nw_corner[0]:.6f}, {nw_corner[1]:.6f}), SW=({sw_corner[0]:.6f}, {sw_corner[1]:.6f}), 中点=({center_point[0]:.6f}, {center_point[1]:.6f})")
+        logger.debug(f"🔍 西側: NW=({nw_corner[0]:.6f}, {nw_corner[1]:.6f}), SW=({sw_corner[0]:.6f}, {sw_corner[1]:.6f}), 中点=({center_point[0]:.6f}, {center_point[1]:.6f})")
         projected_point = find_perpendicular_projection_on_edge(nw_corner, sw_corner, center_point, rotated_coordinates, "west")
         if projected_point:
             corner_positions["西"] = projected_point
-            print(f"🔍 デバッグ: 西側の垂直投影 - 座標: ({corner_positions['西'][0]:.6f}, {corner_positions['西'][1]:.6f})")
+            logger.debug(f"🔍 デバッグ: 西側の垂直投影 - 座標: ({corner_positions['西'][0]:.6f}, {corner_positions['西'][1]:.6f})")
         else:
             corner_positions["西"] = center_point  # フォールバック
-            print(f"🔍 デバッグ: 西側の垂直投影失敗、中点使用 - 座標: ({corner_positions['西'][0]:.6f}, {corner_positions['西'][1]:.6f})")
+            logger.debug(f"🔍 デバッグ: 西側の垂直投影失敗、中点使用 - 座標: ({corner_positions['西'][0]:.6f}, {corner_positions['西'][1]:.6f})")
 
-    print(f"🔍 北側計算開始...")
+    logger.debug(f"🔍 北側計算開始...")
     if "北東" in corner_positions and "北西" in corner_positions:
         # N: NW-NE間の線上（北側の辺）
         nw_corner = corner_positions["北西"]
         ne_corner = corner_positions["北東"]
         center_point = ((nw_corner[0] + ne_corner[0]) / 2, (nw_corner[1] + ne_corner[1]) / 2)
-        print(f"🔍 北側: NW=({nw_corner[0]:.6f}, {nw_corner[1]:.6f}), NE=({ne_corner[0]:.6f}, {ne_corner[1]:.6f}), 中点=({center_point[0]:.6f}, {center_point[1]:.6f})")
+        logger.debug(f"🔍 北側: NW=({nw_corner[0]:.6f}, {nw_corner[1]:.6f}), NE=({ne_corner[0]:.6f}, {ne_corner[1]:.6f}), 中点=({center_point[0]:.6f}, {center_point[1]:.6f})")
         projected_point = find_perpendicular_projection_on_edge(nw_corner, ne_corner, center_point, rotated_coordinates, "north")
         if projected_point:
             corner_positions["北"] = projected_point
-            print(f"🔍 デバッグ: 北側の垂直投影 - 座標: ({corner_positions['北'][0]:.6f}, {corner_positions['北'][1]:.6f})")
+            logger.debug(f"🔍 デバッグ: 北側の垂直投影 - 座標: ({corner_positions['北'][0]:.6f}, {corner_positions['北'][1]:.6f})")
         else:
             corner_positions["北"] = center_point  # フォールバック
-            print(f"🔍 デバッグ: 北側の垂直投影失敗、中点使用 - 座標: ({corner_positions['北'][0]:.6f}, {corner_positions['北'][1]:.6f})")
+            logger.debug(f"🔍 デバッグ: 北側の垂直投影失敗、中点使用 - 座標: ({corner_positions['北'][0]:.6f}, {corner_positions['北'][1]:.6f})")
 
-    print(f"🔍 南側計算開始...")
+    logger.debug(f"🔍 南側計算開始...")
     if "南東" in corner_positions and "南西" in corner_positions:
         # S: SW-SE間の線上（南側の辺）
         # 重要: 仕様書に従い、Sは必ずSW-SE間のポリゴン線上に配置すること
@@ -332,19 +441,19 @@ def calculate_corner_positions(rotated_coordinates, center_lon, center_lat):
                 center_point = sw_se_edge[edge_midpoint_idx]
             
             corner_positions["南"] = center_point
-            print(f"🔍 南側: SW=({sw_corner[0]:.6f}, {sw_corner[1]:.6f}), SE=({se_corner[0]:.6f}, {se_corner[1]:.6f})")
-            print(f"🔍 南側: ポリゴン辺上の中点=({center_point[0]:.6f}, {center_point[1]:.6f}), 辺の点数={len(sw_se_edge)}")
+            logger.debug(f"🔍 南側: SW=({sw_corner[0]:.6f}, {sw_corner[1]:.6f}), SE=({se_corner[0]:.6f}, {se_corner[1]:.6f})")
+            logger.debug(f"🔍 南側: ポリゴン辺上の中点=({center_point[0]:.6f}, {center_point[1]:.6f}), 辺の点数={len(sw_se_edge)}")
         else:
             # 辺が見つからない場合は従来の方法でフォールバック
             center_point = ((sw_corner[0] + se_corner[0]) / 2, (sw_corner[1] + se_corner[1]) / 2)
-            print(f"🔍 南側: SW=({sw_corner[0]:.6f}, {sw_corner[1]:.6f}), SE=({se_corner[0]:.6f}, {se_corner[1]:.6f}), 中点=({center_point[0]:.6f}, {center_point[1]:.6f})")
+            logger.debug(f"�� 南側: SW=({sw_corner[0]:.6f}, {sw_corner[1]:.6f}), SE=({se_corner[0]:.6f}, {se_corner[1]:.6f}), 中点=({center_point[0]:.6f}, {center_point[1]:.6f})")
             projected_point = find_perpendicular_projection_on_edge(sw_corner, se_corner, center_point, rotated_coordinates, "south")
             if projected_point:
                 corner_positions["南"] = projected_point
-                print(f"🔍 デバッグ: 南側の垂直投影 - 座標: ({corner_positions['南'][0]:.6f}, {corner_positions['南'][1]:.6f})")
+                logger.debug(f"🔍 デバッグ: 南側の垂直投影 - 座標: ({corner_positions['南'][0]:.6f}, {corner_positions['南'][1]:.6f})")
             else:
                 corner_positions["南"] = center_point  # フォールバック
-                print(f"🔍 デバッグ: 南側の垂直投影失敗、中点使用 - 座標: ({corner_positions['南'][0]:.6f}, {corner_positions['南'][1]:.6f})")
+                logger.debug(f"🔍 デバッグ: 南側の垂直投影失敗、中点使用 - 座標: ({corner_positions['南'][0]:.6f}, {corner_positions['南'][1]:.6f})")
     
     return corner_positions
 
@@ -364,14 +473,14 @@ def convert_rotated_to_original(rotated_corner_positions, angle, original_coordi
     original_centroid = None
     if original_coordinates:
         original_centroid = np.mean(np.array(original_coordinates), axis=0)
-        print(f"🔍 デバッグ: 元の座標系の中心点 = ({original_centroid[0]:.6f}, {original_centroid[1]:.6f})")
+        logger.debug(f"🔍 デバッグ: 元の座標系の中心点 = ({original_centroid[0]:.6f}, {original_centroid[1]:.6f})")
     
     # 回転後の座標を元の座標系に戻す
     original_corner_positions = {}
     for direction, rotated_coordinate in rotated_corner_positions.items():
         original_coordinate = rotate_coordinates_back(rotated_coordinate, angle, original_centroid)
         original_corner_positions[direction] = original_coordinate
-        print(f"🔄 {direction}: 回転後({rotated_coordinate[0]:.6f}, {rotated_coordinate[1]:.6f}) → 元の座標系({original_coordinate[0]:.6f}, {original_coordinate[1]:.6f})")
+        logger.debug(f"🔄 {direction}: 回転後({rotated_coordinate[0]:.6f}, {rotated_coordinate[1]:.6f}) → 元の座標系({original_coordinate[0]:.6f}, {original_coordinate[1]:.6f})")
     
     return {
         "rotated": rotated_corner_positions,
@@ -407,7 +516,7 @@ def find_corners_human_way(coordinates):
     
     # 形状の向きを判定（デバッグ用）
     optimal_angle = determine_shape_orientation(coordinates)
-    print(f"🔄 形状の最適回転角度: {np.degrees(optimal_angle):.1f}度")
+    logger.debug(f"🔄 形状の最適回転角度: {np.degrees(optimal_angle):.1f}度")
     
     # 元の座標系で直接角を決定（回転を使わない方法）
     coordinates_array = np.array(coordinates)
@@ -496,7 +605,7 @@ def find_corners_human_way(coordinates):
             else:  # 奇数個の点がある場合
                 center_point = sw_se_edge[edge_midpoint_idx]
             
-            print(f"🔍 南側: ポリゴン辺上の中点=({center_point[0]:.6f}, {center_point[1]:.6f})")
+            logger.debug(f"🔍 南側: ポリゴン辺上の中点=({center_point[0]:.6f}, {center_point[1]:.6f})")
             corner_positions["南"] = center_point
         else:
             # 辺が見つからない場合は従来の方法でフォールバック
@@ -588,7 +697,7 @@ def find_polygon_edge_between_points(coords, point1, point2):
     
     # 両方の点が見つからなかった場合
     if point1_idx == -1 or point2_idx == -1:
-        print(f"⚠️ ポリゴン上に指定された点が見つかりませんでした: point1_idx={point1_idx}, point2_idx={point2_idx}")
+        logger.warning(f"⚠️ ポリゴン上に指定された点が見つかりませんでした: point1_idx={point1_idx}, point2_idx={point2_idx}")
         return []
     
     # 辺を構成する点のリストを作成
@@ -614,7 +723,7 @@ def find_polygon_edge_between_points(coords, point1, point2):
     if len(reverse_edge) < len(edge_points):
         edge_points = list(reversed(reverse_edge))
     
-    print(f"🔍 ポリゴン上の辺を特定: {len(edge_points)}点で構成")
+    logger.debug(f"🔍 ポリゴン上の辺を特定: {len(edge_points)}点で構成")
     return edge_points
 
 def visualize_polygon_edge(coords, point1, point2):
@@ -783,12 +892,12 @@ def find_perpendicular_projection_on_edge(corner1, corner2, target_point, coords
     if len(coords) < 3:
         return None
     
-    print(f"🔍 垂直投影デバッグ: 角1={corner1}, 角2={corner2}, 方向={direction_hint}")
+    logger.debug(f"🔍 垂直投影デバッグ: 角1={corner1}, 角2={corner2}, 方向={direction_hint}")
     
     # EまたはWの場合：線分の中点を直接計算
     if direction_hint in ["east", "west"]:
         midpoint = find_line_segment_midpoint(corner1, corner2)
-        print(f"🔍 東西方向：線分の中点を使用 = {midpoint}")
+        logger.debug(f"🔍 東西方向：線分の中点を使用 = {midpoint}")
         return midpoint
     
     # NまたはSの場合：中点から垂直線を引いてポリゴンとの交点を計算
@@ -817,17 +926,17 @@ def find_perpendicular_projection_on_edge(corner1, corner2, target_point, coords
                 # Y方向の係数を大きくして南方向への投影を強調
                 perpendicular_vector = (perpendicular_vector[0]/length * 0.0005, perpendicular_vector[1]/length * 0.01)
         
-        print(f"🔍 南北方向：中点={midpoint}, 垂直ベクトル={perpendicular_vector}")
+        logger.debug(f"🔍 南北方向：中点={midpoint}, 垂直ベクトル={perpendicular_vector}")
         
         # 垂直線とポリゴンの交点を見つける
         intersection = find_perpendicular_intersection_with_polygon(midpoint, perpendicular_vector, coords)
         
         if intersection:
-            print(f"🔍 交点発見: {intersection}")
+            logger.info(f"🔍 交点発見: {intersection}")
             return intersection
         else:
             # 交点が見つからない場合は、方向に応じて別の方法を試す
-            print(f"🔍 交点なし、別の方法を試行...")
+            logger.warning(f"🔍 交点なし、別の方法を試行...")
             
             # ポリゴン上の点を探す（方向を考慮）
             coords_array = np.array(coords)
@@ -839,7 +948,7 @@ def find_perpendicular_projection_on_edge(corner1, corner2, target_point, coords
                     point = coords_array[idx]
                     # X座標が近いかチェック
                     if abs(point[0] - midpoint[0]) < 0.0005:
-                        print(f"🔍 北側の代替点を発見: {tuple(point)}")
+                        logger.info(f"🔍 北側の代替点を発見: {tuple(point)}")
                         return tuple(point)
             
             elif direction_hint == "south":
@@ -868,7 +977,7 @@ def find_perpendicular_projection_on_edge(corner1, corner2, target_point, coords
                         best_point = tuple(point)
                 
                 if best_point:
-                    print(f"🔍 南側の代替点を発見（SW-SE線分に近い点）: {best_point}")
+                    logger.info(f"🔍 南側の代替点を発見（SW-SE線分に近い点）: {best_point}")
                     return best_point
                 
                 # 通常のフォールバック：Y座標が小さく、X座標が中点に近い点
@@ -876,16 +985,16 @@ def find_perpendicular_projection_on_edge(corner1, corner2, target_point, coords
                     point = coords_array[idx]
                     # X座標が近いかチェック
                     if abs(point[0] - midpoint[0]) < 0.0005:
-                        print(f"🔍 南側の代替点を発見: {tuple(point)}")
+                        logger.info(f"🔍 南側の代替点を発見: {tuple(point)}")
                         return tuple(point)
             
             # それでも見つからない場合は中点を使用
-            print(f"🔍 代替点も見つからず、中点を使用: {midpoint}")
+            logger.warning(f"🔍 代替点も見つからず、中点を使用: {midpoint}")
             return midpoint
     
     # その他の場合：中点を返す
     midpoint = find_line_segment_midpoint(corner1, corner2)
-    print(f"🔍 その他：中点を使用 = {midpoint}")
+    logger.debug(f"🔍 その他：中点を使用 = {midpoint}")
     return midpoint
 
 def calculate_direction_edge_position(coordinates, direction):
@@ -941,11 +1050,11 @@ def calculate_direction_edge_position(coordinates, direction):
             ne_corner = corner_positions["北東"]
             center_point = ((nw_corner[0] + ne_corner[0]) / 2, (nw_corner[1] + ne_corner[1]) / 2)
             line_point = find_perpendicular_projection_on_edge(nw_corner, ne_corner, center_point, rotated_coordinates, direction_hint="north")
-            print(f"🔍 デバッグ: 北側計算 - NW: {nw_corner}, NE: {ne_corner}, 垂直投影: {line_point}")
+            logger.debug(f"🔍 デバッグ: 北側計算 - NW: {nw_corner}, NE: {ne_corner}, 垂直投影: {line_point}")
             return line_point
         else:
             fallback = corner_positions.get("北")
-            print(f"🔍 デバッグ: 北側計算 - フォールバック使用: {fallback}")
+            logger.debug(f"🔍 デバッグ: 北側計算 - フォールバック使用: {fallback}")
             return fallback
     
     elif direction == "南":
@@ -969,18 +1078,18 @@ def calculate_direction_edge_position(coordinates, direction):
                 else:  # 奇数個の点がある場合
                     center_point = sw_se_edge[edge_midpoint_idx]
                 
-                print(f"🔍 デバッグ: 南側計算 - SW: {sw_corner}, SE: {se_corner}")
-                print(f"🔍 デバッグ: 南側計算 - ポリゴン辺上の中点: {center_point}, 辺の点数: {len(sw_se_edge)}")
+                logger.debug(f"🔍 デバッグ: 南側計算 - SW: {sw_corner}, SE: {se_corner}")
+                logger.debug(f"🔍 デバッグ: 南側計算 - ポリゴン辺上の中点: {center_point}, 辺の点数: {len(sw_se_edge)}")
                 return center_point
             else:
                 # 辺が見つからない場合は従来の方法でフォールバック
                 center_point = ((sw_corner[0] + se_corner[0]) / 2, (sw_corner[1] + se_corner[1]) / 2)
                 line_point = find_perpendicular_projection_on_edge(sw_corner, se_corner, center_point, rotated_coordinates, direction_hint="south")
-                print(f"🔍 デバッグ: 南側計算 - SW: {sw_corner}, SE: {se_corner}, 垂直投影: {line_point}")
+                logger.debug(f"🔍 デバッグ: 南側計算 - SW: {sw_corner}, SE: {se_corner}, 垂直投影: {line_point}")
                 return line_point
         else:
             fallback = corner_positions.get("南")
-            print(f"🔍 デバッグ: 南側計算 - フォールバック使用: {fallback}")
+            logger.debug(f"🔍 デバッグ: 南側計算 - フォールバック使用: {fallback}")
             return fallback
     
     elif direction == "北東":
@@ -1013,17 +1122,17 @@ def get_location_by_direction(coordinates, direction):
         (lon, lat): 辺上の位置座標（ポリゴンの線上、回転前の元の座標系）
     """
     if len(coordinates) < 3:
-        print(f"❌ 座標データが不足しています（最低3点必要）")
+        logger.error(f"❌ 座標データが不足しています（最低3点必要）")
         return None
     
     # 方角別の辺上位置座標を計算
     edge_position = calculate_direction_edge_position(coordinates, direction)
     
     if edge_position:
-        print(f"📍 {direction}側の辺上位置座標: 経度={edge_position[0]:.6f}, 緯度={edge_position[1]:.6f}")
+        logger.info(f"📍 {direction}側の辺上位置座標: 経度={edge_position[0]:.6f}, 緯度={edge_position[1]:.6f}")
         return edge_position
     else:
-        print(f"❌ {direction}側の辺上位置座標を計算できませんでした")
+        logger.error(f"❌ {direction}側の辺上位置座標を計算できませんでした")
         return None
 
 def visualize_with_direction_positions(corner_positions, coordinates):
@@ -1035,7 +1144,7 @@ def visualize_with_direction_positions(corner_positions, coordinates):
         coordinates: 元のポリゴン座標リスト
     """
     if corner_positions is None or coordinates is None:
-        print("❌ corner_positions または coordinates が None です")
+        logger.error("❌ corner_positions または coordinates が None です")
         return
     
     # 可視化
@@ -1084,7 +1193,7 @@ def visualize_with_direction_positions(corner_positions, coordinates):
     # ファイルに保存
     output_file = f"direction_positions_human_way.png"
     plt.savefig(output_file, dpi=150, bbox_inches='tight')
-    print(f"✅ 可視化結果を保存しました: {output_file}")
+    logger.info(f"✅ 可視化結果を保存しました: {output_file}")
     
     plt.show()
     
@@ -1103,7 +1212,7 @@ def visualize_rotated_positions(rotated_coordinates, optimal_angle):
         dict: 計算された各方向の座標（回転後の座標系）
     """
     if rotated_coordinates is None or optimal_angle is None:
-        print("❌ rotated_coordinates または optimal_angle が None です")
+        logger.error("❌ rotated_coordinates または optimal_angle が None です")
         return None
     
     rotated_array = np.array(rotated_coordinates)
@@ -1126,8 +1235,8 @@ def visualize_rotated_positions(rotated_coordinates, optimal_angle):
     lats_array = rotated_array[:, 1]
     
     # デバッグ: 回転後の座標範囲を確認
-    print(f"🔍 デバッグ: 回転後の座標範囲 - X: {min(lons_array):.6f} ～ {max(lons_array):.6f}, Y: {min(lats_array):.6f} ～ {max(lats_array):.6f}")
-    print(f"🔍 デバッグ: 回転後の中心座標 - ({center_lon:.6f}, {center_lat:.6f})")
+    logger.debug(f"🔍 デバッグ: 回転後の座標範囲 - X: {min(lons_array):.6f} ～ {max(lons_array):.6f}, Y: {min(lats_array):.6f} ～ {max(lats_array):.6f}")
+    logger.debug(f"🔍 デバッグ: 回転後の中心座標 - ({center_lon:.6f}, {center_lat:.6f})")
     
     # 各方向の角を見つける（回転後の座標系で）
     corner_positions = calculate_corner_positions(rotated_coordinates, center_lon, center_lat)
@@ -1139,9 +1248,9 @@ def visualize_rotated_positions(rotated_coordinates, optimal_angle):
         plt.plot(corner_position_lons, corner_position_lats, 'rx', markersize=15, label='Corner Positions (Rotated)', zorder=12)
         
         # デバッグ: corner_positions辞書の内容を確認
-        print(f"🔍 デバッグ: corner_positions辞書の内容 - {list(corner_positions.keys())}")
+        logger.debug(f"🔍 デバッグ: corner_positions辞書の内容 - {list(corner_positions.keys())}")
         for direction, corner_position in corner_positions.items():
-            print(f"🔍 デバッグ: {direction} = ({corner_position[0]:.6f}, {corner_position[1]:.6f})")
+            logger.debug(f"🔍 デバッグ: {direction} = ({corner_position[0]:.6f}, {corner_position[1]:.6f})")
     
     # 各方角の辺上位置座標を計算・プロット
     directions = ["東", "西", "南", "北", "北東", "北西", "南東", "南西"]
@@ -1166,7 +1275,7 @@ def visualize_rotated_positions(rotated_coordinates, optimal_angle):
     for i, direction in enumerate(directions):
         if direction in corner_positions:
             corner_position = corner_positions[direction]
-            print(f"🎨 プロット: {direction} - 座標({corner_position[0]:.6f}, {corner_position[1]:.6f})")
+            logger.info(f"🎨 プロット: {direction} - 座標({corner_position[0]:.6f}, {corner_position[1]:.6f})")
             
             # NE, NW, SE, SWは角として表示
             if direction in ["北東", "北西", "南東", "南西"]:
@@ -1226,7 +1335,7 @@ def visualize_rotated_positions(rotated_coordinates, optimal_angle):
         plt.ylim(lat_min - lat_margin, lat_max + lat_margin)
         
         # デバッグ: 可視化範囲を確認
-        print(f"🔍 デバッグ: 可視化範囲 - X: {lon_min - lon_margin:.6f} ～ {lon_max + lon_margin:.6f}, Y: {lat_min - lat_margin:.6f} ～ {lat_max + lat_margin:.6f}")
+        logger.debug(f"🔍 デバッグ: 可視化範囲 - X: {lon_min - lon_margin:.6f} ～ {lon_max + lon_margin:.6f}, Y: {lat_min - lat_margin:.6f} ～ {lat_max + lat_margin:.6f}")
         
         # 全ての角の座標と可視化範囲内チェック
         for direction in ["東", "西", "北", "南", "北東", "北西", "南東", "南西"]:
@@ -1234,14 +1343,14 @@ def visualize_rotated_positions(rotated_coordinates, optimal_angle):
                 x, y = corner_positions[direction]
                 in_x_range = (lon_min - lon_margin) <= x <= (lon_max + lon_margin)
                 in_y_range = (lat_min - lat_margin) <= y <= (lat_max + lat_margin)
-                print(f"🔍 {direction}: ({x:.6f}, {y:.6f}) - X範囲内:{in_x_range}, Y範囲内:{in_y_range}")
+                logger.debug(f"🔍 {direction}: ({x:.6f}, {y:.6f}) - X範囲内:{in_x_range}, Y範囲内:{in_y_range}")
             else:
-                print(f"🔍 {direction}: 座標なし")
+                logger.debug(f"🔍 {direction}: 座標なし")
     
     # ファイルに保存
     output_file = f"place_rotated_debug.png"
     plt.savefig(output_file, dpi=150, bbox_inches='tight')
-    print(f"✅ 回転後座標の可視化結果を保存しました: {output_file}")
+    logger.info(f"✅ 回転後座標の可視化結果を保存しました: {output_file}")
     
     plt.show()
     
@@ -1250,11 +1359,56 @@ def visualize_rotated_positions(rotated_coordinates, optimal_angle):
 
 # メイン実行部分
 if __name__ == "__main__":
-    print(f"🔍 場所 '{PLACE}' の座標をosmnxから取得中...")
-    print("🧠 人間の形状認識に基づくアルゴリズムで各方向の位置を決定します")
+    logger.info(f"🔍 場所 '{PLACE}' の座標をosmnxから取得中...")
+    logger.info("🧠 人間の形状認識に基づくアルゴリズムで各方向の位置を決定します")
+    
+    # ライブラリインターフェイスのテスト
+    logger.info("\n📚 ライブラリインターフェイステスト:")
+    logger.info("=" * 50)
+    
+    # 1. get_geodataframe_place のテスト
+    logger.info("1️⃣ get_geodataframe_place のテスト:")
+    gdf = get_geodataframe_place(PLACE)
+    if gdf is not None:
+        logger.info(f"✅ GeoDataFrame取得成功: {len(gdf)} 件")
+    else:
+        logger.error("❌ GeoDataFrame取得失敗")
+        exit(1)
+    
+    # 2. get_coordinates_directions のテスト
+    logger.info("\n2️⃣ get_coordinates_directions のテスト:")
+    directions_coordinates = get_coordinates_directions(gdf)
+    if directions_coordinates:
+        logger.info("✅ 方向別座標取得成功:")
+        for direction, coordinates in directions_coordinates.items():
+            logger.info(f"  📍 {direction}: ({coordinates[0]:.6f}, {coordinates[1]:.6f})")
+    else:
+        logger.error("❌ 方向別座標取得失敗")
+    
+    # 3. get_geodataframe_address のテスト（オプション）
+    logger.info("\n3️⃣ get_geodataframe_address のテスト:")
+    test_address = "Tokyo, Japan"  # 英語住所でテスト
+    address_gdf = get_geodataframe_address(test_address)
+    if address_gdf is not None:
+        logger.info(f"✅ 住所からのGeoDataFrame取得成功: {len(address_gdf)} 件")
+        # 住所からも方向別座標を取得
+        address_directions = get_coordinates_directions(address_gdf)
+        if address_directions:
+            logger.info("✅ 住所からの方向別座標取得成功:")
+            for direction, coordinates in address_directions.items():
+                logger.info(f"  📍 {direction}: ({coordinates[0]:.6f}, {coordinates[1]:.6f})")
+    else:
+        logger.error("❌ 住所からのGeoDataFrame取得失敗")
+    
+    logger.info("\n" + "=" * 50)
+    logger.info("🎉 ライブラリインターフェイステスト完了！")
+    logger.info("\n💡 人間の形状認識に基づくアルゴリズムで高速にデータを取得しました")
+    
+    # 従来の詳細テスト（オプション）
+    logger.info("\n🔍 従来の詳細テスト（デバッグ情報付き）:")
+    logger.info("=" * 50)
     
     # 元のポリゴン座標を取得
-    gdf = get_geodataframe_place(PLACE)
     original_coordinates = None
     optimal_angle = None
     
@@ -1264,26 +1418,26 @@ if __name__ == "__main__":
             original_coordinates = list(geometry.exterior.coords)
             # 形状の向きを判定
             optimal_angle = determine_shape_orientation(original_coordinates)
-            print(f"🔄 形状の最適回転角度: {np.degrees(optimal_angle):.1f}度")
+            logger.info(f"🔄 形状の最適回転角度: {np.degrees(optimal_angle):.1f}度")
     
     # 回転後の座標を事前に計算
     rotated_coordinates = None
     if original_coordinates and optimal_angle is not None:
         rotated_coordinates = rotate_coordinates(original_coordinates, optimal_angle)
-        print(f"🔄 回転後の座標を計算しました（{len(rotated_coordinates)}点）")
+        logger.info(f"🔄 回転後の座標を計算しました（{len(rotated_coordinates)}点）")
     
     # 回転後の座標系で可視化（デバッグ用）
-    print("\n🔍 回転後の座標系で可視化（デバッグ）:")
+    logger.info("\n🔍 回転後の座標系で可視化（デバッグ）:")
     if rotated_coordinates is not None and optimal_angle is not None:
         rotated_corner_positions = visualize_rotated_positions(rotated_coordinates, optimal_angle)
     else:
-        print("❌ 回転後の座標または角度が計算できませんでした")
+        logger.error("❌ 回転後の座標または角度が計算できませんでした")
         rotated_corner_positions = None
     
     # 回転後の座標を元の座標系に戻す
     corner_positions = None
     if rotated_corner_positions and optimal_angle is not None:
-        print("\n🔄 回転後の座標を元の座標系に戻します:")
+        logger.info("\n🔄 回転後の座標を元の座標系に戻します:")
         corner_positions = convert_rotated_to_original(rotated_corner_positions, optimal_angle, original_coordinates)
         
         # 回転後と元の座標系の座標を表示
@@ -1292,21 +1446,21 @@ if __name__ == "__main__":
             original_corner_positions = corner_positions["original"]
             rotation_angle = corner_positions["angle"]
             
-            print(f"\n🔄 回転角度: {np.degrees(rotation_angle):.2f}度")
+            logger.info(f"\n🔄 回転角度: {np.degrees(rotation_angle):.2f}度")
             
-            print("\n💾 回転後と元の座標系の座標を保存しました:")
-            print("\n| 方向 | 回転後の座標 (x, y) | 元の座標系 (lon, lat) |")
-            print("|------|-------------------|-------------------|")
+            logger.info("\n💾 回転後と元の座標系の座標を保存しました:")
+            logger.info("\n| 方向 | 回転後の座標 (x, y) | 元の座標系 (lon, lat) |")
+            logger.info("|------|-------------------|-------------------|")
             for direction in ["東", "西", "南", "北", "北東", "北西", "南東", "南西"]:
                 if direction in rotated_corner_positions and direction in original_corner_positions:
                     rotated = rotated_corner_positions[direction]
                     original = original_corner_positions[direction]
-                    print(f"| {direction} | ({rotated[0]:.6f}, {rotated[1]:.6f}) | ({original[0]:.6f}, {original[1]:.6f}) |")
+                    logger.info(f"| {direction} | ({rotated[0]:.6f}, {rotated[1]:.6f}) | ({original[0]:.6f}, {original[1]:.6f}) |")
     
     # 全方角の辺上位置座標を計算（元の座標系）
     directions = ["東", "西", "南", "北", "北東", "北西", "南東", "南西"]
     
-    print("\n📍 各方向の辺上位置座標（人間の形状認識ベース）:")
+    logger.info("\n📍 各方向の辺上位置座標（人間の形状認識ベース）:")
     api_corner_positions = {}
     for direction in directions:
         edge_position = get_location_by_direction(original_coordinates, direction)
@@ -1316,9 +1470,9 @@ if __name__ == "__main__":
     # 元の座標系の座標と比較（検証用）
     if corner_positions and api_corner_positions:
         original_corner_positions = corner_positions["original"]
-        print("\n🔍 元の座標系の座標の比較（回転逆変換 vs API取得）:")
-        print("\n| 方向 | 回転逆変換 (lon, lat) | API取得 (lon, lat) | 差分 (m) |")
-        print("|------|-------------------|-------------------|---------|")
+        logger.info("\n🔍 元の座標系の座標の比較（回転逆変換 vs API取得）:")
+        logger.info("\n| 方向 | 回転逆変換 (lon, lat) | API取得 (lon, lat) | 差分 (m) |")
+        logger.info("|------|-------------------|-------------------|---------|")
         for direction in directions:
             if direction in original_corner_positions and direction in api_corner_positions:
                 rotated_back = original_corner_positions[direction]
@@ -1328,12 +1482,12 @@ if __name__ == "__main__":
                 lat_diff_m = abs(rotated_back[1] - api[1]) * 111000
                 lon_diff_m = abs(rotated_back[0] - api[0]) * 111000 * np.cos(np.radians(api[1]))
                 total_diff_m = np.sqrt(lat_diff_m**2 + lon_diff_m**2)
-                print(f"| {direction} | ({rotated_back[0]:.6f}, {rotated_back[1]:.6f}) | ({api[0]:.6f}, {api[1]:.6f}) | {total_diff_m:.2f} |")
+                logger.info(f"| {direction} | ({rotated_back[0]:.6f}, {rotated_back[1]:.6f}) | ({api[0]:.6f}, {api[1]:.6f}) | {total_diff_m:.2f} |")
     
-    print("\n🎨 可視化を実行中...")
+    logger.info("\n🎨 可視化を実行中...")
     if corner_positions is not None and original_coordinates is not None:
         visualize_with_direction_positions(corner_positions, original_coordinates)
     else:
-        print("❌ corner_positions または original_coordinates が None です")
+        logger.error("❌ corner_positions または original_coordinates が None です")
     
-    print("\n💡 人間の形状認識に基づくアルゴリズムで高速にデータを取得しました")
+    logger.info("\n💡 人間の形状認識に基づくアルゴリズムで高速にデータを取得しました")
