@@ -14,7 +14,7 @@ plt.rcParams['axes.unicode_minus'] = False
 # PLACE = "長沼公園, 八王子市, 日本"
 PLACE = "多摩動物園, 日野市, 日本"
 
-def get_place_geodataframe(place):
+def get_geodataframe_place(place):
     """
     osmnxを使って場所からGeoDataFrameを取得する関数
     
@@ -33,6 +33,39 @@ def get_place_geodataframe(place):
             return None
         else:
             print(f"✅ 場所 '{place}' のデータを正常に取得しました")
+            return gdf
+    except Exception as e:
+        print(f"❌ エラー: {e}")
+        return None
+
+def get_geodataframe_address(address):
+    """
+    住所からGeoDataFrameを取得する関数
+    
+    Args:
+        address: 検索する住所（例: "東京都日野市程久保7-1-1"）
+    
+    Returns:
+        GeoDataFrame: 住所のGeoDataFrame
+    """
+    try:
+        print(f"🏠 住所 '{address}' のデータをosmnxから取得中...")
+        
+        # 住所から座標を取得
+        coordinates = ox.geocoder.geocode(address)
+        if coordinates is None:
+            print(f"❌ 住所 '{address}' の座標を取得できませんでした")
+            return None
+        
+        # 座標から周辺のポリゴンデータを取得
+        # 半径500mの範囲でポリゴンを検索
+        gdf = ox.geocode_to_gdf(f"{coordinates[1]:.6f},{coordinates[0]:.6f}")
+        
+        if gdf.empty:
+            print(f"❌ 住所 '{address}' の周辺データを取得できませんでした")
+            return None
+        else:
+            print(f"✅ 住所 '{address}' のデータを正常に取得しました")
             return gdf
     except Exception as e:
         print(f"❌ エラー: {e}")
@@ -1054,6 +1087,9 @@ def visualize_with_direction_positions(corner_positions, coordinates):
     print(f"✅ 可視化結果を保存しました: {output_file}")
     
     plt.show()
+    
+    # 回転後の座標のみを返す
+    return corner_positions
 
 def visualize_rotated_positions(rotated_coordinates, optimal_angle):
     """
@@ -1218,7 +1254,7 @@ if __name__ == "__main__":
     print("🧠 人間の形状認識に基づくアルゴリズムで各方向の位置を決定します")
     
     # 元のポリゴン座標を取得
-    gdf = get_place_geodataframe(PLACE)
+    gdf = get_geodataframe_place(PLACE)
     original_coordinates = None
     optimal_angle = None
     
