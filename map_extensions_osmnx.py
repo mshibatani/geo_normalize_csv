@@ -36,7 +36,7 @@ def setup_logging(level=logging.INFO):
     logger.addHandler(console_handler)
     
     # ファイルハンドラーを追加（オプション）
-    file_handler = logging.FileHandler('get_outline_location.log', encoding='utf-8')
+    file_handler = logging.FileHandler('map_extensions_osmnx.log', encoding='utf-8')
     file_handler.setLevel(logging.DEBUG)  # ファイルには全てのログを記録
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)

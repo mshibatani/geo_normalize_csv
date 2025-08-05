@@ -2,7 +2,7 @@
 
 ## 🎯 概要
 
-`get_outline_location.py`では、print文をloggingシステムに置き換えて、ログレベルによる出力制御を実装しました。
+`map_extensions_osmnx.py`では、print文をloggingシステムに置き換えて、ログレベルによる出力制御を実装しました。
 
 ## 🔧 ログレベルの設定
 
@@ -11,19 +11,19 @@
 ```bash
 # DEBUGレベル（全てのログを表示）
 export LOG_LEVEL=DEBUG
-python get_outline_location.py
+python map_extensions_osmnx.py
 
 # INFOレベル（通常の実行情報のみ）
 export LOG_LEVEL=INFO
-python get_outline_location.py
+python map_extensions_osmnx.py
 
 # WARNINGレベル（警告とエラーのみ）
 export LOG_LEVEL=WARNING
-python get_outline_location.py
+python map_extensions_osmnx.py
 
 # ERRORレベル（エラーのみ）
 export LOG_LEVEL=ERROR
-python get_outline_location.py
+python map_extensions_osmnx.py
 ```
 
 ### デフォルト設定
@@ -88,7 +88,7 @@ python get_outline_location.py
 ## 📁 ログファイル
 
 ### ファイル出力
-- **ファイル名**: `get_outline_location.log`
+- **ファイル名**: `map_extensions_osmnx.log`
 - **エンコーディング**: UTF-8
 - **ログレベル**: DEBUG（全てのログを記録）
 - **フォーマット**: `%(asctime)s - %(name)s - %(levelname)s - %(message)s`
@@ -108,33 +108,33 @@ python get_outline_location.py
 ```bash
 # 全てのログを表示してデバッグ
 export LOG_LEVEL=DEBUG
-python get_outline_location.py
+python map_extensions_osmnx.py
 ```
 
 ### 通常実行時
 ```bash
 # 重要な情報のみ表示
 export LOG_LEVEL=INFO
-python get_outline_location.py
+python map_extensions_osmnx.py
 ```
 
 ### 本番環境
 ```bash
 # エラーのみ表示
 export LOG_LEVEL=ERROR
-python get_outline_location.py
+python map_extensions_osmnx.py
 ```
 
 ### ログファイルの確認
 ```bash
 # ログファイルの内容を確認
-tail -f get_outline_location.log
+tail -f map_extensions_osmnx.log
 
 # エラーログのみを確認
-grep "ERROR" get_outline_location.log
+grep "ERROR" map_extensions_osmnx.log
 
 # デバッグログのみを確認
-grep "DEBUG" get_outline_location.log
+grep "DEBUG" map_extensions_osmnx.log
 ```
 
 ## 🔄 ログレベルの変更方法
@@ -154,7 +154,7 @@ logger.setLevel(logging.ERROR)  # エラーレベルに変更
 ### 環境変数での変更
 ```bash
 # 一時的な変更
-LOG_LEVEL=DEBUG python get_outline_location.py
+LOG_LEVEL=DEBUG python map_extensions_osmnx.py
 
 # 永続的な変更
 echo 'export LOG_LEVEL=INFO' >> ~/.bashrc
@@ -177,13 +177,13 @@ echo $LOG_LEVEL
 
 # デフォルトレベルで実行
 unset LOG_LEVEL
-python get_outline_location.py
+python map_extensions_osmnx.py
 ```
 
 ### ログファイルが作成されない場合
 ```bash
 # ファイルの書き込み権限を確認
-ls -la get_outline_location.log
+ls -la map_extensions_osmnx.log
 
 # ディレクトリの書き込み権限を確認
 ls -la .
@@ -193,13 +193,13 @@ ls -la .
 ```bash
 # 環境変数を再設定
 export LOG_LEVEL=DEBUG
-python get_outline_location.py
+python map_extensions_osmnx.py
 ```
 
 ## 📚 関連ファイル
 
-- `get_outline_location.py`: メインのPythonファイル
-- `get_outline_location.log`: ログファイル（実行時に自動生成）
+- `map_extensions_osmnx.py`: メインのPythonファイル
+- `map_extensions_osmnx.log`: ログファイル（実行時に自動生成）
 - `README.md`: プロジェクトの概要
 - `README_DIRECTION_MARKERS.md`: 方向マーカーの仕様
 
