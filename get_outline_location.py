@@ -126,6 +126,56 @@ def rotate_coordinates(coords, angle):
     
     return final_coords.tolist()
 
+def rotate_coordinates_back(coords, angle, original_centroid=None):
+    """
+    回転後の座標を元の座標系に戻す関数
+    
+    Args:
+        coords: 回転後の座標のリスト [(x, y), ...] または単一の座標 (x, y)
+        angle: 元の回転角度（ラジアン）
+        original_centroid: 元の座標系の中心点 (省略可能)
+    
+    Returns:
+        list または tuple: 元の座標系に戻した座標
+    """
+    # 単一の座標の場合、リストに変換して処理
+    is_single_coord = False
+    if not isinstance(coords, list) and not isinstance(coords, np.ndarray):
+        coords = [coords]
+        is_single_coord = True
+    elif isinstance(coords, list) and len(coords) > 0 and not isinstance(coords[0], list) and not isinstance(coords[0], tuple):
+        coords = [coords]
+        is_single_coord = True
+    
+    coords_array = np.array(coords)
+    
+    # 中心点が指定されていない場合は計算
+    if original_centroid is None:
+        centroid = np.mean(coords_array, axis=0)
+    else:
+        centroid = np.array(original_centroid)
+    
+    # 重心を原点に移動
+    centered_coords = coords_array - centroid
+    
+    # 逆回転行列を作成（-angleで回転）
+    inverse_rotation_matrix = np.array([
+        [np.cos(-angle), -np.sin(-angle)],
+        [np.sin(-angle), np.cos(-angle)]
+    ])
+    
+    # 逆回転を適用
+    rotated_back_coords = np.dot(centered_coords, inverse_rotation_matrix.T)
+    
+    # 重心を戻す
+    final_coords = rotated_back_coords + centroid
+    
+    # 元の形式に戻す
+    if is_single_coord:
+        return tuple(final_coords[0])
+    else:
+        return final_coords.tolist()
+
 def find_corners_human_way(coords):
     """
     人間の形状認識に基づいて角を見つける関数
@@ -1159,8 +1209,30 @@ def visualize_rotated_positions(place):
         
         plt.show()
         
-        # 計算された座標を返す
-        return corners
+        # 回転後の座標と元の座標系に戻した座標を返す
+        # 元の座標を取得
+        geometry = gdf.geometry.iloc[0]
+        if hasattr(geometry, 'exterior'):
+            original_coords = list(geometry.exterior.coords)
+        else:
+            original_coords = []
+            
+        # 元の座標系の中心を計算
+        original_centroid = np.mean(np.array(original_coords), axis=0) if original_coords else None
+        
+        # 回転後の座標を元の座標系に戻す
+        original_corners = {}
+        for direction, rotated_coord in corners.items():
+            original_coord = rotate_coordinates_back(rotated_coord, optimal_angle, original_centroid)
+            original_corners[direction] = original_coord
+            print(f"🔄 {direction}: 回転後({rotated_coord[0]:.6f}, {rotated_coord[1]:.6f}) → 元の座標系({original_coord[0]:.6f}, {original_coord[1]:.6f})")
+        
+        return {
+            "rotated": corners,
+            "original": original_corners,
+            "angle": optimal_angle,
+            "centroid": original_centroid.tolist() if original_centroid is not None else None
+        }
         
     else:
         print(f"❌ 場所 '{place}' のデータを取得できませんでした")
@@ -1173,23 +1245,50 @@ if __name__ == "__main__":
     
     # 回転後の座標系で可視化（デバッグ用）
     print("\n🔍 回転後の座標系で可視化（デバッグ）:")
-    rotated_corners = visualize_rotated_positions(PLACE)
+    corners_data = visualize_rotated_positions(PLACE)
     
-    # 回転後の座標を保存
-    if rotated_corners:
-        print("\n💾 回転後の座標を保存しました:")
-        for direction, coords in rotated_corners.items():
-            print(f"  - {direction}: ({coords[0]:.6f}, {coords[1]:.6f})")
+    # 回転後と元の座標系の座標を保存
+    if corners_data:
+        rotated_corners = corners_data["rotated"]
+        original_corners = corners_data["original"]
+        rotation_angle = corners_data["angle"]
+        
+        print(f"\n🔄 回転角度: {np.degrees(rotation_angle):.2f}度")
+        
+        print("\n💾 回転後と元の座標系の座標を保存しました:")
+        print("\n| 方向 | 回転後の座標 (x, y) | 元の座標系 (lon, lat) |")
+        print("|------|-------------------|-------------------|")
+        for direction in ["東", "西", "南", "北", "北東", "北西", "南東", "南西"]:
+            if direction in rotated_corners and direction in original_corners:
+                rotated = rotated_corners[direction]
+                original = original_corners[direction]
+                print(f"| {direction} | ({rotated[0]:.6f}, {rotated[1]:.6f}) | ({original[0]:.6f}, {original[1]:.6f}) |")
     
-    # 全方角の辺上位置座標を計算
+    # 全方角の辺上位置座標を計算（元の座標系）
     directions = ["東", "西", "南", "北", "北東", "北西", "南東", "南西"]
     
     print("\n📍 各方向の辺上位置座標（人間の形状認識ベース）:")
-    original_corners = {}
+    api_corners = {}
     for direction in directions:
         coords = get_location_by_direction(PLACE, direction)
         if coords:
-            original_corners[direction] = coords
+            api_corners[direction] = coords
+    
+    # 元の座標系の座標と比較（検証用）
+    if corners_data and api_corners:
+        print("\n🔍 元の座標系の座標の比較（回転逆変換 vs API取得）:")
+        print("\n| 方向 | 回転逆変換 (lon, lat) | API取得 (lon, lat) | 差分 (m) |")
+        print("|------|-------------------|-------------------|---------|")
+        for direction in directions:
+            if direction in original_corners and direction in api_corners:
+                rotated_back = original_corners[direction]
+                api = api_corners[direction]
+                # 緯度経度の差をメートルに換算（概算）
+                # 緯度1度は約111km、経度1度は緯度によって異なるが、約111km×cos(緯度)
+                lat_diff_m = abs(rotated_back[1] - api[1]) * 111000
+                lon_diff_m = abs(rotated_back[0] - api[0]) * 111000 * np.cos(np.radians(api[1]))
+                total_diff_m = np.sqrt(lat_diff_m**2 + lon_diff_m**2)
+                print(f"| {direction} | ({rotated_back[0]:.6f}, {rotated_back[1]:.6f}) | ({api[0]:.6f}, {api[1]:.6f}) | {total_diff_m:.2f} |")
     
     print("\n🎨 可視化を実行中...")
     visualize_with_direction_positions(PLACE)
