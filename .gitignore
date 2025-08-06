@@ -183,6 +183,7 @@ Thumbs.db
 api_keys.txt
 secrets.json
 credentials.json
+*.json
 
 # テスト用ファイル
 test_*.py
