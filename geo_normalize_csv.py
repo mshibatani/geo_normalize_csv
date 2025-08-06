@@ -262,8 +262,15 @@ def remove_street_number(address):
     address = re.sub(r'[0-9０-９]+[-－][0-9０-９]+[-－]?[0-9０-９]*', '', address)
     address = re.sub(r'[0-9０-９]+丁目[0-9０-９]+番[0-9０-９]*号?', '', address)
     address = re.sub(r'[0-9０-９]+番[0-9０-９]*号?', '', address)
+    address = re.sub(r'[0-9０-９]+丁目', '', address)
+    address = re.sub(r'[0-9０-９]+番', '', address)
     address = re.sub(r'[0-9０-９]+号', '', address)
     address = re.sub(r'[0-9０-９]+$', '', address)
+    
+    # 「先」で終わる住所の場合、「先」を削除 🔧
+    if address.endswith('先'):
+        address = address[:-1]  # 最後の「先」を削除
+    
     return address.strip()
 
 def calculate_similarity(str1, str2):
@@ -371,14 +378,14 @@ def process(config_path):
     header = list(format_config.keys())
     if "note" not in header:
         header.append("note")
-    output_path = config["output"]
+    output_path = config.get("output", "/tmp/address_validation_db.csv")  # 出力ファイルのデフォルト設定を追加
 
     api_needed = any("{lat}" in v or "{long}" in v for v in format_config.values())
     api_key = config.get("api", {}).get("key") if api_needed else None
     sleep_msec = int(config.get("api", {}).get("sleep", 200)) if api_needed else 200
 
     # 住所検証DBの読み込み
-    validation_db_path = config.get("address_validation_db", "address_validation_db.csv")
+    validation_db_path = config.get("address_validation_db", "/tmp/address_validation_db.csv")  # デフォルト設定を/tmp/address_validation_db.csvに変更
     if validation_db_path == "":
         validation_db_path = "/tmp/address_validation_db.csv"
     validation_db = load_address_validation_db(validation_db_path)

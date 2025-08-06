@@ -26,7 +26,7 @@ def clean_address(address):
     
     return address
 
-def extract_addresses_from_ken_all(input_file, output_file):
+def extract_addresses_from_ken_all(input_file, output_file = "/tmp/address_validation_db.csv"):
     """郵便番号データベースから住所情報を抽出"""
     addresses = set()  # 重複を自動的に除去するためsetを使用
     
@@ -103,7 +103,7 @@ def main():
     print()
     
     # 住所情報を抽出
-    addresses = extract_addresses_from_ken_all(args.input, args.output)
+    addresses = extract_addresses_from_ken_all(args.input)
     
     # 結果を保存
     save_addresses_to_csv(addresses, args.output)
