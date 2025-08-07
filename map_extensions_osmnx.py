@@ -62,7 +62,7 @@ plt.rcParams['font.sans-serif'] = ['Arial', 'DejaVu Sans']
 plt.rcParams['axes.unicode_minus'] = False
 
 # 対象の場所（例：東京駅）
-PLACE = "みなみ野毘沙門の丘緑地, 八王子市, 日本"
+PLACE = "みなみ野毘沙門の丘緑地, 八王子市, 東京都, 日本"
 # PLACE = "長沼公園, 八王子市, 日本"
 # PLACE = "多摩動物園, 日野市, 日本"
 
